@@ -1,0 +1,20 @@
+{
+  "plotter_bounds": {
+    "x_min": 0,
+    "x_max": 150,
+    "y_min": 0,
+    "y_max": 150.0
+  },
+  "ipad_bounds": {
+    "x_min": 15,
+    "x_max": 875,
+    "y_min": 230,
+    "y_max": 1105
+  },
+  "axes_swapped": true,
+  "x_inverted": false,
+  "y_inverted": false,
+  "orientation": "portrait",
+  "device": "iPad",
+  "calibration_date": "2025-11-11 15:15:32"
+}
