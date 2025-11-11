@@ -1,6 +1,6 @@
 import time
-from LoadCalibration_Smart import load_calibration
-from SmartPlotterCalibration import PenPlotter
+from Calibration.LoadCalibration_Smart import load_calibration
+from Calibration.SmartPlotterCalibration import PenPlotter
 
 def quick_test():
     """Quick test of plotter with loaded smart calibration"""

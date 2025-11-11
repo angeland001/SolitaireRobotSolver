@@ -1,5 +1,5 @@
 import json
-from CoordinateMapper_Swapped import CoordinateMapper
+from Calibration.CoordinateMapper_Swapped import CoordinateMapper
 
 def load_calibration(filename='calibration.json'):
     """

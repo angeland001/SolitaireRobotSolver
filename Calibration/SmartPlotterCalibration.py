@@ -1,6 +1,6 @@
 import time
-from plotter_controller import PenPlotter
-from CoordinateMapper_Swapped import CoordinateMapper
+from Calibration.plotter_controller import PenPlotter
+from Calibration.CoordinateMapper_Swapped import CoordinateMapper
 
 class SmartPlotterCalibrator:
     """Enhanced calibrator that automatically detects and handles axis swapping"""

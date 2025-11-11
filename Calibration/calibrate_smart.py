@@ -7,8 +7,8 @@ Automatically detects and compensates for axis swapping
 import json
 import sys
 import time
-from plotter_controller import PenPlotter
-from SmartPlotterCalibration import SmartPlotterCalibrator
+from Calibration.plotter_controller import PenPlotter
+from Calibration.SmartPlotterCalibration import SmartPlotterCalibrator
 
 
 def main():
