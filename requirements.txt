@@ -1,0 +1,7 @@
+# Install CUDA PyTorch first (RTX Blackwell needs CUDA 12.8+ wheels):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+ultralytics
+opencv-python
+pyyaml
+numpy
+pyserial

@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+
+# Generated / large artifacts
+datasets/
+runs/
+captures/
+models/*.pt
+*.onnx
+*.log

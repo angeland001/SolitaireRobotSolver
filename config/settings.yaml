@@ -1,0 +1,51 @@
+screen:
+  # iPad Air 11" (M2), portrait. Native pixels = 2x points.
+  width_px: 1640
+  height_px: 2360
+  scale: 2
+  ppi: 264                    # Apple spec; 1640x2360 px = 157.8 x 227.1 mm of glass
+
+capture:
+  source: window              # window (AirPlay receiver) | camera (HDMI capture card / OBS) | monitor
+  window_title: "AirPlay - Screen Mirroring Receiver"   # see live_view.py --list-windows
+  camera_index: 1             # 0 is usually the laptop webcam
+  monitor: 1
+  rotate: 0                   # 0/90/180/270, if the mirror shows the iPad sideways
+  black_threshold: 20         # pixels darker than this count as letterbox bars
+  aspect_tolerance: 0.02      # crop w/h must be within 2% of 1640/2360
+
+plotter:
+  port: COM3
+  baud: 115200
+  pen_up: "M3 S0"             # from the 2025 prototype; tune with plotter_console.py
+  pen_down: "M3 S90"
+  servo_settle_s: 0.15        # wait after a pen move so the servo arrives
+  tap_dwell_s: 0.08           # time the tip rests on the glass during a tap
+  drag_feed: 1500             # mm/min for drags (G0 travel uses GRBL's max rates)
+  jog_step_mm: 5
+
+layout:
+  # Fractions of screen width/height, measured from the 10k dataset boxes.
+  top_row_max_y: 0.25         # a box whose top edge is above this is in the top row
+  column_x: [0.186, 0.290, 0.394, 0.498, 0.601, 0.705, 0.808]
+  column_tolerance: 0.035     # max |box centre - column centre| to belong to a column
+  foundation_x: [0.186, 0.290, 0.394, 0.498]
+  waste_x_range: [0.55, 0.76] # the fan of up to 3 cards; right-most is playable
+  stock_x: 0.808
+  bottom_y: 0.80              # ignore boxes below this (button bar)
+
+vision:
+  # Raw Label Studio YOLO export (images/, labels/, classes.txt). Kept outside the repo.
+  dataset_dir: C:/Users/rvj412/Downloads/Yolo/YoloSolitaire
+  # Generated split + data.yaml (git-ignored)
+  prepared_dir: datasets/yolo_solitaire
+  val_fraction: 0.15          # picks the best epoch during training
+  test_fraction: 0.15         # never seen during training; final score only
+  split_block_size: 6         # consecutive screenshots kept together to avoid train/val leakage
+  base_model: yolo11s.pt
+  imgsz: 1280
+  epochs: 150
+  batch: 4                    # 8 at imgsz 1280 overflowed the 8 GB GPU into system RAM
+  workers: 2
+  weights: models/cards.pt    # best weights copied here after training
+  conf_threshold: 0.5
