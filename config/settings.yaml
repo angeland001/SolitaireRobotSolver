@@ -7,7 +7,8 @@ screen:
 
 capture:
   source: window              # window (AirPlay receiver) | camera (HDMI capture card / OBS) | monitor
-  window_title: "AirPlay - Screen Mirroring Receiver"   # see live_view.py --list-windows
+  # Receiver window title(s), first match wins: AirServer, then the old free receiver's two titles (see live_view.py --list-windows)
+  window_title: ["AirServer", "AirPlay - Screen Mirroring Receiver", "AirMirroring"]
   camera_index: 1             # 0 is usually the laptop webcam
   monitor: 1
   rotate: 0                   # 0/90/180/270, if the mirror shows the iPad sideways
@@ -15,13 +16,16 @@ capture:
   aspect_tolerance: 0.02      # crop w/h must be within 2% of 1640/2360
 
 plotter:
-  port: COM3
+  port: auto                  # auto = find by usb_ids; or a fixed name like COM7 (--port overrides)
+  usb_ids: ["1A86:7523"]      # VID:PID of the UNO clone's CH340 USB-serial chip
   baud: 115200
   pen_up: "M3 S0"             # from the 2025 prototype; tune with plotter_console.py
   pen_down: "M3 S90"
   servo_settle_s: 0.15        # wait after a pen move so the servo arrives
   tap_dwell_s: 0.08           # time the tip rests on the glass during a tap
-  drag_feed: 1500             # mm/min for drags (G0 travel uses GRBL's max rates)
+  drag_feed: 1500             # mm/min for pen-down drags
+  travel_feed: 3000           # mm/min for pen-up moves. G0 at $110=8000 skipped steps on diagonals (CoreXY runs one motor at up to 2x); raise slowly once runs are clean
+  axis_moves: true            # move X then Y, never diagonally (diagonals made the X+Y motor slip); also applies to drags
   jog_step_mm: 5
 
 layout:
@@ -49,3 +53,8 @@ vision:
   workers: 2
   weights: models/cards.pt    # best weights copied here after training
   conf_threshold: 0.5
+
+calibration:
+  max_check_error_px: 30      # calibrate.py refuses to save if a check tap misses by more (a card strip is ~60 px tall)
+  min_grid_lines: 3           # found dots must span at least this many grid rows AND columns
+  mirror_settle_s: 1.0        # wait after a tap before looking for its dot; 0.4 missed dots with AirServer's lag

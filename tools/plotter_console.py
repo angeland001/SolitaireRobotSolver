@@ -1,6 +1,6 @@
 """Interactive plotter console: jog, tune the pen, run the direction test.
 
-Usage: python tools/plotter_console.py [--port COM3]
+Usage: python tools/plotter_console.py [--port COMx|auto]
 
 Commands (type `help` inside):
   x 10 / y -5          move along a plotter axis (mm)
@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from solitaire.calibration import Axes  # noqa: E402
 from solitaire.calibration.axes import DIRECTIONS, validate  # noqa: E402
 from solitaire.config import REPO_ROOT, load_settings  # noqa: E402
-from solitaire.plotter import Grbl, GrblError  # noqa: E402
+from solitaire.plotter import Grbl, GrblError, PortNotFound, find_port  # noqa: E402
 
 
 def ask_direction(axis: str) -> str:
@@ -63,7 +63,7 @@ def main():
     settings = load_settings()
     pcfg = settings["plotter"]
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default=pcfg["port"])
+    ap.add_argument("--port", default=pcfg["port"], help="COMx, or auto (default from settings)")
     args = ap.parse_args()
 
     try:
@@ -72,8 +72,12 @@ def main():
         axes = None
     step = float(pcfg["jog_step_mm"])
 
-    print(f"Connecting to {args.port}...")
-    g = Grbl(args.port, pcfg["baud"], pcfg)
+    try:
+        port = find_port(args.port, pcfg.get("usb_ids"))
+    except PortNotFound as e:
+        sys.exit(str(e))
+    print(f"Connecting to {port}...")
+    g = Grbl(port, pcfg["baud"], pcfg)
     print(f"{g.banner}\nPencil is UP. Position is (0, 0) until you jog; use `zero` to set the origin.")
     if axes is None:
         print("No direction file yet - run `direction` first.")

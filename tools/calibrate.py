@@ -25,7 +25,7 @@ from solitaire.calibration import Axes, Calibration  # noqa: E402
 from solitaire.calibration.axes import DIRECTIONS  # noqa: E402
 from solitaire.capture import ScreenNormalizer, open_source  # noqa: E402
 from solitaire.config import REPO_ROOT, load_settings  # noqa: E402
-from solitaire.plotter import Grbl, GrblError  # noqa: E402
+from solitaire.plotter import Grbl, GrblError, PortNotFound, find_port  # noqa: E402
 
 
 class TapFinder:
@@ -69,22 +69,22 @@ def jog_to(g: Grbl, axes: Axes, label: str) -> tuple[float, float]:
             print("  up/down/left/right [mm] | tap | ok")
 
 
-def tap_and_find(g, finder, x_mm, y_mm):
+def tap_and_find(g, finder, x_mm, y_mm, settle_s):
     g.move_to(x_mm, y_mm)
     before = finder.snapshot()
     g.tap()
-    time.sleep(0.4)  # mirror latency
+    time.sleep(settle_s)  # mirror latency: the dot shows up on the PC a moment after the tap
     return finder.find(before, finder.snapshot())
 
 
-def rezero(g: Grbl, axes: Axes, finder: TapFinder):
+def rezero(g: Grbl, axes: Axes, finder: TapFinder, settle_s: float):
     """After a power cycle the plotter's zero is wherever it woke up. One observed
     tap tells us where the pencil really is, via the saved calibration."""
     cal = Calibration.load()
     jog_to(g, axes, "MIDDLE of the touch page")
     before = finder.snapshot()
     g.tap()
-    time.sleep(0.4)
+    time.sleep(settle_s)
     px = finder.find(before, finder.snapshot())
     if px is None:
         sys.exit("Tap not seen - check the touch page and pen-down value.")
@@ -95,9 +95,9 @@ def rezero(g: Grbl, axes: Axes, finder: TapFinder):
 
 def main():
     settings = load_settings()
-    pcfg, scr = settings["plotter"], settings["screen"]
+    pcfg, scr, ccfg = settings["plotter"], settings["screen"], settings["calibration"]
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default=pcfg["port"])
+    ap.add_argument("--port", default=pcfg["port"], help="COMx, or auto (default from settings)")
     ap.add_argument("--window")
     ap.add_argument("--camera", type=int)
     ap.add_argument("--cols", type=int, default=3)
@@ -120,34 +120,50 @@ def main():
         sys.exit(f"Mirror crop aspect {first.aspect:.4f} != iPad 0.6949 - fix capture first "
                  "(check with tools/live_view.py).")
     finder = TapFinder(source, normalizer)
-    g = Grbl(args.port, pcfg["baud"], pcfg)
+    try:
+        port = find_port(args.port, pcfg.get("usb_ids"))
+    except PortNotFound as e:
+        sys.exit(str(e))
+    print(f"Connecting to {port}...")
+    g = Grbl(port, pcfg["baud"], pcfg)
     print(g.banner)
     print("\nOn the iPad: open touch_target.html full-screen (see README §4.3 C).")
 
     try:
         if args.rezero:
-            rezero(g, axes, finder)
+            rezero(g, axes, finder, ccfg["mirror_settle_s"])
             return
         a = jog_to(g, axes, "TOP-LEFT")
         g.set_zero()
         a = (0.0, 0.0)
         b = jog_to(g, axes, "BOTTOM-RIGHT")
 
-        pts_mm, pts_px = [], []
-        for v in np.linspace(0, 1, args.rows):
-            for u in np.linspace(0, 1, args.cols):
+        pts_mm, pts_px, seen_u, seen_v = [], [], set(), set()
+        for iv, v in enumerate(np.linspace(0, 1, args.rows)):
+            for iu, u in enumerate(np.linspace(0, 1, args.cols)):
                 x, y = a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * v
-                px = tap_and_find(g, finder, x, y)
+                px = tap_and_find(g, finder, x, y, ccfg["mirror_settle_s"])
                 status = f"({px[0]:.0f}, {px[1]:.0f}) px" if px else "NOT FOUND"
                 print(f"  tap ({x:6.1f}, {y:6.1f}) mm -> {status}")
                 if px:
                     pts_mm.append((x, y))
                     pts_px.append(px)
+                    seen_u.add(iu)
+                    seen_v.add(iv)
         g.move_to(0, 0)
 
         if len(pts_px) < 6:
             sys.exit(f"Only {len(pts_px)} taps were seen; need 6+. Check the touch page, "
-                     "the pen-down value, and the mirror.")
+                     "the pen-down value, and the mirror. Nothing saved.")
+        # Dots on only two lines leave the fit undefined between them (it can
+        # report a tiny RMS and still miss by centimetres), so demand a real grid.
+        min_lines = ccfg["min_grid_lines"]
+        if len(seen_u) < min(min_lines, args.cols) or len(seen_v) < min(min_lines, args.rows):
+            sys.exit("Whole rows/columns of the grid were NOT FOUND, so the dots don't span the "
+                     "screen and the fit would be unreliable. Usually a corner was off the glass, "
+                     "or the gantry hit the end of its travel and skipped steps (a jog bigger "
+                     "than the room left). Nothing saved - rerun and keep both corners on the "
+                     "white page.")
         cal = Calibration.fit(pts_px, pts_mm)
         print(f"\nFit: {cal.n_points} points, RMS error {cal.rms_mm:.2f} mm")
 
@@ -158,7 +174,7 @@ def main():
         errs = []
         for fu, fv in ((0.25, 0.3), (0.75, 0.5), (0.5, 0.8)):
             target = (lo[0] + (hi[0] - lo[0]) * fu, lo[1] + (hi[1] - lo[1]) * fv)
-            got = tap_and_find(g, finder, *cal.px_to_mm(*target))
+            got = tap_and_find(g, finder, *cal.px_to_mm(*target), ccfg["mirror_settle_s"])
             if got:
                 err_px = float(np.hypot(got[0] - target[0], got[1] - target[1]))
                 errs.append(err_px)
@@ -176,6 +192,15 @@ def main():
         x0, x1, y0, y1 = cal.screen_bounds_mm(w, h)
         print(f"Whole screen spans X {x0:.1f}..{x1:.1f} mm, Y {y0:.1f}..{y1:.1f} mm "
               f"from the zero (top-left start corner). Compare with GRBL $130/$131 travel.")
+
+        max_err = ccfg["max_check_error_px"]
+        if len(errs) < 2:
+            sys.exit(f"\nOnly {len(errs)} of 3 check taps were seen, so the fit can't be trusted. "
+                     "Nothing saved - rerun.")
+        if max(errs) > max_err:
+            sys.exit(f"\nCheck taps missed by up to {max(errs):.0f} px (limit {max_err} px). "
+                     "Nothing saved. If the grid itself looked fine, the plotter probably skipped "
+                     "steps during the run (loose belt, low VREF, or a crash at the end of travel).")
 
         cal.save()
         print(f"\nSaved {REPO_ROOT / 'config' / 'calibration.json'}"

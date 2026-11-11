@@ -44,12 +44,19 @@ class WindowSource:
 
     PW_CLIENTONLY_RENDERFULLCONTENT = 0x1 | 0x2
 
-    def __init__(self, title: str):
-        matches = [(h, t) for h, t in list_windows() if title.lower() in t.lower()]
-        if not matches:
-            raise RuntimeError(f"No visible window with {title!r} in its title. "
+    def __init__(self, title: str | list[str]):
+        # A list lets one config cover a receiver app whose title changes
+        # (e.g. after an update); the first title that matches wins.
+        titles = [title] if isinstance(title, str) else list(title)
+        windows = list_windows()
+        for want in titles:
+            matches = [(h, t) for h, t in windows if want.lower() in t.lower()]
+            if matches:
+                self.hwnd, self.title = matches[0]
+                break
+        else:
+            raise RuntimeError(f"No visible window with any of {titles} in its title. "
                                f"Run tools/live_view.py --list-windows to see titles.")
-        self.hwnd, self.title = matches[0]
         self.gdi32 = ctypes.windll.gdi32
 
     def grab(self) -> np.ndarray:

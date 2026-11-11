@@ -14,7 +14,7 @@ A pen plotter holds an Apple Pencil Pro over an iPad and plays Klondike Solitair
 | Electronics | Arduino UNO (clone) + CNC Shield V3, 2× A4988 drivers, 2× SL42STH34-1334A steppers, 1× pen-lift servo | A4988 VREF set to ~0.6 V in the reference build |
 | Firmware | GRBL 1.1h servo fork ([lavolpecheprogramma/grbl-1-1h-servo](https://github.com/lavolpecheprogramma/grbl-1-1h-servo)) compiled with **CoreXY** enabled; serial at **115200 baud** | Pen is a servo driven through spindle PWM: `M3 S<value>` sets its position (prior code used `S0` = up, `S90` = down) |
 | Limit switches | **None by default** | Without them, `$H` homing doesn't work. Zero is wherever the gantry sits at power-on (see §1.1) |
-| Host connection | USB serial, previously `COM3` on Windows | Port can change; keep it in config |
+| Host connection | USB serial via the UNO clone's CH340 chip (USB ID `1A86:7523`; was `COM7` on 2026-11-09, `COM3` is another device) | The COM number can change with the USB port, so `plotter.port: auto` finds it by USB ID (`solitaire.plotter.find_port`); `--port COMx` overrides |
 | Tablet | iPad Air **11"** (M2, 2024), portrait | 820×1180 pt = **1640×2360 px** (confirmed from the dataset's screenshots) |
 | Stylus | Apple Pencil Pro, mounted in the pen holder | Must be paired and charged. Air M2 supports Pencil **hover**, which can show previews before contact (see §6) |
 | Host computer | Windows 11 PC running Python | |
@@ -25,6 +25,7 @@ A pen plotter holds an Apple Pencil Pro over an iPad and plays Klondike Solitair
 
 - **Kits ship with the wrong firmware.** The stock board ran plain GRBL v0.9i without CoreXY, so moving X also moved Y. Run `$I` to confirm the board reports 1.1h, then make one X move and one Y move and check that each moves only one axis.
 - **CoreXY:** both motors work together on every move, so if one motor is weaker (bad VREF), the result is skewed diagonal motion, not just one slow axis. If moves come out diagonal or lose steps, check VREF first.
+- **CoreXY diagonals run one motor at double speed.** GRBL caps X and Y separately (`$110/$111` = 8000 mm/min), so a G0 diagonal drives one motor at up to 16000 mm/min, and it skipped steps (2026-11-11: calibration check taps off by ~40 mm, **equal in X and Y**, the signature of one motor slipping). Pen-up moves therefore use `G1` at `plotter.travel_feed` (3000 mm/min), not `G0`. That alone wasn't enough: the **X+Y motor** still slipped on +X+Y diagonals, where it runs 1.41× the feed rate. So the driver now caps **motor** speed: every move and drag is slowed until the busier motor runs at no more than the feed rate (`Grbl._corexy_feed`; straight moves keep full speed, 45° diagonals drop to ~71%). That didn't fix it either, so **`plotter.axis_moves: true` (default) makes every move and drag go X first, then Y**. No move is diagonal, and straight moves never slipped. It costs a little time per move. Equal X/Y errors = one CoreXY motor slipping. If it still happens, lower `$120/$121` (acceleration, now 1200), then check that motor's VREF.
 - **GRBL settings:** dump them with `$$` and save a copy to `config/grbl_settings.txt` so a reflashed board can be restored. The reference build's tuned settings were only shown as a screenshot; ours are the ones to trust. Settings guide: [Grbl v1.1 Configuration](https://github.com/gnea/grbl/wiki/Grbl-v1.1-Configuration).
 - **No homing = no fixed origin.** Without limit switches, `(0,0)` is wherever the gantry was at power-on or reset. **Rule: the session starts by jogging to a physical reference corner and running `G92 X0 Y0`, then calibration (§3.2).** Adding limit switches to the CNC Shield's END STOP pins (as the reference author did) would make this repeatable and enable `$H`. It's optional, but a cheap upgrade.
 - **Pen stability matters most** ("make sure the pen is stable", the author's top tip). For us that means the Pencil mount must not wobble or flex, or taps will land off-target or fail to register.
@@ -64,7 +65,8 @@ The plotter itself never needs to see the screen. It only needs a **screen-pixel
 
 The YOLO dataset was built from screenshots of the app, so a mirrored frame is the closest match to the training data. The camera stays as a fallback.
 
-**In use (2026-10-22):** the Windows app **"AirPlay - Screen Mirroring Receiver"** (`capture.window_title`). The window is captured with `PrintWindow`, so it works **even when other windows cover it**, but it must not be minimised. The receiver draws its own grey title bar inside the window; the cropper drops rows that are lit across the black side bars (window chrome), then checks the aspect ratio. First live read: crop 1336×1920, aspect **0.6958 vs 0.6949 expected (0.1%)**, and the game state read correctly, including three shimmering cards.
+**In use (2026-11-11): AirServer** (Windows Desktop Edition, paid with a trial). It replaced the free receiver below because that one kept dropping the stream. Its mirror window is titled "AirServer - AirServer Windows Desktop Edition", which matches the first entry in `capture.window_title`. First read: crop 1335×1920, aspect 0.6953 (OK).
+**Before that (2026-10-22):** the Windows app **"AirPlay - Screen Mirroring Receiver"** (process `airplay_receiver`). By 2026-11-11 its window title had changed to **"AirMirroring"**, so `capture.window_title` is a list of titles and the first match wins. The window is captured with `PrintWindow`, so it works **even when other windows cover it**, but it must not be minimised. The receiver draws its own grey title bar inside the window; the cropper drops rows that are lit across the black side bars (window chrome), then checks the aspect ratio. Dark rows of the iPad screen itself (e.g. the black status bar above the white touch page) look like letterbox, so a crop that comes out too short is grown back to the iPad's shape from its width, upwards and never into the chrome (fixed 2026-11-11: aspect 0.715 → 0.696). First live read: crop 1336×1920, aspect **0.6958 vs 0.6949 expected (0.1%)**, and the game state read correctly, including three shimmering cards.
 
 `solitaire.capture` trims the black bars around the mirror, **checks that the crop has the iPad's aspect ratio** (1640/2360 = 0.6949, within 2%), and resizes it to **1640×2360**. Every module works in these normalised screen pixels. Tested offline: a screenshot shrunk to 750×1080 (what a 1080p capture gives) reads exactly the same as the full-resolution original, so 1080p capture is plenty.
 
@@ -72,7 +74,7 @@ The YOLO dataset was built from screenshots of the app, so a mirrored frame is t
 
 Three steps, each with its own tool (runbook in §4.4):
 1. **Direction test** (`plotter_console.py` → `direction`): moves +X and then +Y with the pencil up, and you say which way it went on the iPad (up/down/left/right). Saved to `config/plotter_axes.json`. A diagonal move, or both axes moving along the same line, means CoreXY isn't set up right (§1.1), and the test refuses to continue. After this, jogging uses screen words (`left 5`).
-2. **Grid calibration** (`calibrate.py`): with `tools/touch_target.html` open full screen on the iPad (it draws a dot wherever it's touched), you jog the pencil to the top-left and bottom-right of the area. That top-left point becomes the plotter's **(0, 0)**. The plotter taps a 3×4 grid, each new dot is found by differencing the mirrored frame before and after the tap, and a **homography** (pixels → mm) is fitted, which absorbs axis swaps, inversions, a tilted iPad and skew. Three extra taps aimed by pixel position check the fit. Saved to `config/calibration.json`. (The old `calibration.json` at the repo root is from the 2025 prototype and isn't used.)
+2. **Grid calibration** (`calibrate.py`): with `tools/touch_target.html` open full screen on the iPad (it draws a dot wherever it's touched), you jog the pencil to the top-left and bottom-right of the area. That top-left point becomes the plotter's **(0, 0)**. The plotter taps a 3×4 grid, each new dot is found by differencing the mirrored frame before and after the tap, and a **homography** (pixels → mm) is fitted, which absorbs axis swaps, inversions, a tilted iPad and skew. Three extra taps aimed by pixel position check the fit. Saved to `config/calibration.json` **only if** the found dots span at least 3 grid rows and 3 columns and every check tap lands within `calibration.max_check_error_px` (30 px). A fit through dots on only two lines can show a tiny RMS and still miss by centimetres (seen 2026-11-11, after a jog past the end of travel skipped steps). (The old `calibration.json` at the repo root is from the 2025 prototype and isn't used.)
 3. **Pixel-dimension check** (part of step 2): the fit gives the screen's physical size in mm. It must match the iPad Air 11" spec (1640×2360 px at 264 ppi = **157.8 × 227.1 mm**) within 3%. A mismatch means the capture crop or the screen-size setting is wrong. The tool also prints how many mm the whole screen spans, so you can compare it with the plotter's travel.
 
 - **Re-zero after a power cycle or reset** (`calibrate.py --rezero`): no limit switches means the zero is lost. One tap anywhere on the touch page plus the saved calibration tells the plotter exactly where it is, with no full recalibration.
@@ -191,7 +193,14 @@ What the errors have in common: most land on cards wearing the app's **holograph
 
 ### 4.3 Hardware session runbook
 
-Run everything from the repo folder with the venv's Python (`$py = "$env:USERPROFILE\.venvs\solitaire\Scripts\python.exe"` in PowerShell, then `& $py tools\...`).
+Run everything from the repo folder with the venv's Python (`$py = "$env:USERPROFILE\.venvs\solitaire\Scripts\python.exe"` in PowerShell, then `& $py tools\...`; the `&` is required).
+
+**Every session (after setup is done once):**
+1. Plug in the plotter (USB + power) with the pencil over the iPad's top-left, where it was at calibration. Don't move the iPad in its holder.
+2. iPad: Auto-Lock = Never, on the charger. Mirror to **AirServer** on the PC; keep its window open (not minimised; it can sit behind others).
+3. Check: `& $py tools\live_view.py` shows **aspect OK**, then `q`.
+4. If the plotter was power-cycled or reset since the last calibration: serve the touch page (C.1), then `& $py tools\calibrate.py --rezero` and one tap.
+5. Only one program can hold the COM port: close `plotter_console.py` before running `calibrate.py` (or the game loop), and the other way round.
 
 **A. Live card detection (iPad only, no plotter needed)**
 1. Mirror the iPad to the PC (§3.1). For a receiver window: `& $py tools\live_view.py --list-windows` to find its title, then `& $py tools\live_view.py --window "<part of title>"`. For a capture card: `& $py tools\live_view.py --camera 1` (try 0, 1, 2).
@@ -200,7 +209,7 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 4. Once it works, put the title/index in `config/settings.yaml` → `capture:` so the flags aren't needed.
 
 **B. Plotter bring-up**
-1. Plug in the plotter, find its COM port (Device Manager → Ports), and set `plotter.port` in settings.
+1. Plug in the plotter. The port is found automatically (`plotter.port: auto`); if it isn't, the error lists every serial port. Then pass `--port COMx` or add the board's USB ID to `plotter.usb_ids`.
 2. `& $py tools\plotter_console.py`, then:
    - `info` → should say Grbl 1.1h; `settings` → saves `config/grbl_settings.txt` (note `$130`/`$131` = max travel).
    - `direction` → answer which way the pencil moved; saves `config/plotter_axes.json`.
@@ -208,7 +217,7 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 
 **C. Calibration**
 1. Serve the touch page: `& $py -m http.server 8000 --directory tools`. On the iPad, open Safari at `http://<PC IP>:8000/touch_target.html` (find the IP with `ipconfig`) and use Share → Add to Home Screen, then open it from there for true full screen. If the network blocks this (common on campus Wi-Fi), use a phone hotspot, or a blank Notes page with a thick black marker: the tool only needs a dark mark on white.
-2. Keep the mirror running, then `& $py tools\calibrate.py`. Jog to the top-left of the game area, `ok`; bottom-right, `ok`. It taps 12 points, fits, verifies, and prints the size check.
+2. Keep the mirror running, then `& $py tools\calibrate.py`. Jog until a `tap` lands ~10–15 mm in from the **screen's** top-left corner, then `ok`. Do the same at the bottom-right (about `down 200`, `right 135` from there), then `ok`. **Jog in steps of ≤150 mm: there are no limit switches, and running past the end of travel skips steps.** It taps 12 points, fits, verifies, and saves only if the check taps land within 30 px. Paste the output to Claude if it refuses.
 3. After any power cycle or reset: `& $py tools\calibrate.py --rezero`.
 
 ### 4.4 Environment
@@ -219,6 +228,23 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 ---
 
 ## 5. Status / roadmap
+
+### Where we are (updated 2026-11-11). Read this first in a new session
+**All hardware is working and calibrated. Everything left is software.**
+
+- **Vision:** YOLO model `models/cards.pt` reads boards at ~99.5% card-level accuracy. The owner has decided it's good enough for now (300 more images are already annotated if the shimmer/"$" errors become a real problem; retrain then). `StateBuilder` turns detections into a validated `GameState`.
+- **Capture:** iPad mirrored with **AirServer** (the free receiver kept dropping). Crop works (aspect OK), including the iPad's black status bar.
+- **Plotter:** GRBL 1.1h on `COM7`, auto-detected by USB ID. Axes: +X = screen down, +Y = screen right. Pen down `M3 S90` registers taps. **Moves go X then Y, never diagonally** (`axis_moves`): diagonals made one CoreXY motor slip (§1.1).
+- **Calibration:** `config/calibration.json` saved 2026-11-11. Check taps land within 14 px (~1.4 mm). The zero is the plotter's power-on position over the iPad's top-left. After a reset, run `calibrate.py --rezero`.
+- **Not built yet:** solver, executor (move → tap), the main control loop. `solitaire/solver/` and `solitaire/main.py` don't exist.
+
+**Next steps, in order** (the plotter isn't needed until step 4):
+1. **Multi-frame agreement + wait-until-stable:** accept a state only when 2–3 consecutive reads match and are valid (§3.5, §4.1 fix 1).
+2. **Solver v1** in `solitaire/solver/`: legal-move generator, heuristic ranking (§3.4), and a prediction of where a tapped card will go (foundation first, else the left-most legal column, §3.3). Interface: `choose_move(state) -> Move | None`.
+3. **Executor:** `Move` → tap the card's visible strip (or a drag fallback) → `Calibration.px_to_mm` → `Grbl.tap`/`drag`.
+4. **`solitaire/main.py`**: the §3.5 loop. Start with `--dry-run` (prints the chosen move over the live mirror, no plotter), then live play with verify-after-tap.
+5. Optional robustness: detect when the mirror drops (black/idle frame) and pause, not tap blind.
+
 
 - [x] Plotter assembled
 - [x] YOLO dataset of the app's cards collected (308 screenshots, 53 classes; see §4.1)
@@ -232,8 +258,8 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 - [x] Calibration tool (grid taps → homography → verify → pixel-size check) + `--rezero`
 - [x] **Hardware run A:** AirPlay receiver app chosen; first live frame read correctly (§3.1)
 - [ ] Watch `live_view.py` through a full game; save (`s`) any frames it misreads for the dataset
-- [ ] **Hardware run B:** verify firmware (`$I`, `$$` backup), direction test, tune pen-down value
-- [ ] **Hardware run C:** calibrate; confirm the size check passes and the game area is within plotter travel
+- [x] **Hardware run B** (2026-11-09): `$$` backed up (`$130`=310, `$131`=210 mm travel), direction test (+X → screen down, +Y → screen right, confirmed with taps in the mirror), taps register at `M3 S90`
+- [x] **Hardware run C** (2026-11-11, AirServer, `axis_moves` on): 12/12 grid taps found, RMS 0.36 mm, check taps within **14 px** (~1.4 mm), size check 159.4×222.4 mm vs spec 157.8×227.1 (consistent). The screen spans X −11.7..213.2, Y −12.0..152.0 mm from the zero, well inside the 310×210 mm travel. The only parts left of or above the zero are the screen edge strips (status bar, left margin), which hold no tap targets.
 - [ ] Train/verify YOLO model on mirrored frames
 - [x] GameState builder + validation (§4.2)
 - [x] Train / val / test split (224 / 42 / 42)

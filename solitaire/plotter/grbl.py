@@ -26,6 +26,8 @@ class Grbl:
         self.settle_s = cfg.get("servo_settle_s", 0.15)
         self.tap_dwell_s = cfg.get("tap_dwell_s", 0.08)
         self.drag_feed = cfg.get("drag_feed", 1500)
+        self.travel_feed = cfg.get("travel_feed", 3000)
+        self.axis_moves = cfg.get("axis_moves", True)
         self.bounds_mm = bounds_mm          # (x_min, x_max, y_min, y_max) or None
         self.pos_mm = (0.0, 0.0)
 
@@ -108,12 +110,38 @@ class Grbl:
                 raise GrblError(f"({x:.1f}, {y:.1f}) mm is outside the safe area {self.bounds_mm}")
 
     def move_to(self, x: float, y: float, wait: bool = True):
-        """Pen-up travel at max rate."""
+        """Pen-up travel at travel_feed. Not G0: GRBL caps X and Y separately,
+        so a G0 diagonal runs one CoreXY motor at up to twice $110 and it skips
+        steps (seen 2026-11-11 as equal X and Y errors after the move home)."""
         self._check(x, y)
-        self.send(f"G0 X{x:.3f} Y{y:.3f}")
-        self.pos_mm = (x, y)
+        self._line_to(x, y, self.travel_feed)
         if wait:
             self.wait_idle()
+
+    def _line_to(self, x: float, y: float, feed: float):
+        """G1 to (x, y). With axis_moves on, go X first and then Y, so no move is
+        diagonal: diagonals made the X+Y motor slip, straight moves never did."""
+        if self.axis_moves and x != self.pos_mm[0] and y != self.pos_mm[1]:
+            self.send(f"G1 X{x:.3f} F{feed:.0f}")
+            self.pos_mm = (x, self.pos_mm[1])
+        f = self._corexy_feed(x, y, feed)
+        self.send(f"G1 X{x:.3f} Y{y:.3f} F{f:.0f}")
+        self.pos_mm = (x, y)
+
+    def _corexy_feed(self, x: float, y: float, motor_feed: float) -> float:
+        """Feed rate that keeps BOTH CoreXY motors at or below motor_feed.
+
+        Motor A turns with dx+dy and motor B with dx-dy, so on a diagonal one
+        motor runs up to 1.41x the feed rate. The X+Y motor slipped at that
+        (2026-11-11: check taps short by equal X and Y after +X+Y diagonals),
+        so diagonals are slowed until the busier motor is back at motor_feed.
+        """
+        dx, dy = x - self.pos_mm[0], y - self.pos_mm[1]
+        length = (dx * dx + dy * dy) ** 0.5
+        busiest = max(abs(dx + dy), abs(dx - dy))
+        if length == 0 or busiest == 0:
+            return motor_feed
+        return motor_feed * length / busiest
 
     def jog(self, dx: float, dy: float):
         x, y = self.pos_mm
@@ -139,8 +167,7 @@ class Grbl:
         self._check(x1, y1)
         self.move_to(x0, y0, wait=False)
         self.pen_down()
-        self.send(f"G1 X{x1:.3f} Y{y1:.3f} F{self.drag_feed}")
-        self.pos_mm = (x1, y1)
+        self._line_to(x1, y1, self.drag_feed)
         self.pen_up()
         self.wait_idle()
 

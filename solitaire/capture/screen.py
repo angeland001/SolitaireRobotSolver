@@ -56,6 +56,16 @@ class ScreenNormalizer:
         if h > expected_h * (1 + self.aspect_tolerance):
             y0 = y1 - expected_h + 1
             h = expected_h
+        elif h < expected_h * (1 - self.aspect_tolerance / 2):
+            # Too short: dark rows of the iPad screen itself (e.g. a black status
+            # bar over a white page) were trimmed as if they were letterbox. The
+            # side bars fix the width reliably, so grow back to the iPad's shape -
+            # upwards first (status bar is on top), never into window chrome.
+            chrome_rows = np.flatnonzero(chrome[:y0])
+            top_limit = int(chrome_rows[-1]) + 1 if chrome_rows.size else 0
+            y0 = max(top_limit, y1 - expected_h + 1)
+            y1 = min(frame.shape[0] - 1, y0 + expected_h - 1)
+            h = y1 - y0 + 1
         return x0, y0, w, h
 
     def normalize(self, frame: np.ndarray) -> ScreenFrame:
