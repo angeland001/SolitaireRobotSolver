@@ -22,9 +22,10 @@ import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from solitaire.capture import ScreenNormalizer, list_windows, open_source  # noqa: E402
-from solitaire.config import REPO_ROOT, load_settings  # noqa: E402
+from solitaire.config import REPO_ROOT, load_settings, repo_path  # noqa: E402
 from solitaire.state import StabilityTracker, StateBuilder  # noqa: E402
 from solitaire.vision import CardDetector  # noqa: E402
+from solitaire.vision.misreads import MisreadRecorder  # noqa: E402
 
 GREEN, GREY, RED, YELLOW, WHITE = (0, 200, 0), (150, 150, 150), (0, 0, 255), (0, 220, 255), (255, 255, 255)
 
@@ -104,6 +105,7 @@ def main():
     detector = CardDetector(conf=args.conf)
     builder = StateBuilder()
     tracker = StabilityTracker(settings["stability"]["agree_frames"])
+    recorder = MisreadRecorder(repo_path(settings["game"]["misread_dir"]))
     layout = settings["layout"]
     save_dir = REPO_ROOT / "captures"
 
@@ -115,7 +117,11 @@ def main():
             dets = detector.detect(screen.image)
             state = builder.build(dets, screen.image.shape[1], screen.image.shape[0])
 
+            recorder.add(state, screen.image)
             stable = tracker.push(state)
+            if stable is not None:
+                for true, read in recorder.settled(stable):
+                    print(f"  misread: {true} read as {read} (frame saved to {recorder.out_dir})")
             if stable is not None and stable.signature != last_state:
                 print(f"\n[{datetime.now():%H:%M:%S}] stable board, {len(dets)} boxes\n{stable}")
                 last_state = stable.signature

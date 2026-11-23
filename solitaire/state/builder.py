@@ -78,6 +78,11 @@ class StateBuilder:
     def _check_rules(state: GameState) -> None:
         issues = state.issues
 
+        if not state.visible_cards() and state.stock is None and not any(c.facedown for c in state.tableau):
+            # A black or frozen mirror, or a menu, parses as an empty board with no rule
+            # broken; the solver would then see no moves and press Finish.
+            issues.append("no cards on screen (mirror dropped, or not a game board)")
+
         seen = Counter(state.visible_cards())
         issues += [f"{c} seen {n} times" for c, n in seen.items() if n > 1]
 

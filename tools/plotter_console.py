@@ -141,7 +141,14 @@ def main():
             except (GrblError, ValueError, IndexError) as e:
                 print(f"error: {e}")
     finally:
-        g.close()
+        try:
+            # Opening the port resets GRBL and the zero becomes wherever the pencil is,
+            # so park on the zero before letting go (README §3.2).
+            g.pen_up()
+            g.move_to(0, 0)
+            print("Parked at the zero.")
+        finally:
+            g.close()
 
 
 if __name__ == "__main__":

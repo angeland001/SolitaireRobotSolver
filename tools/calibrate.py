@@ -91,6 +91,10 @@ def rezero(g: Grbl, axes: Axes, finder: TapFinder, settle_s: float):
     x, y = cal.px_to_mm(*px)
     g.set_position(x, y)
     print(f"Tap landed at ({px[0]:.0f}, {px[1]:.0f}) px -> pencil is at ({x:.1f}, {y:.1f}) mm. Zero restored.")
+    # Opening the port resets the Arduino, and GRBL then takes wherever the pencil is
+    # as (0, 0). Park on the zero so the next program starts with the right origin.
+    g.move_to(0, 0)
+    print("Parked at the zero.")
 
 
 def main():

@@ -25,7 +25,7 @@ plotter:
   tap_dwell_s: 0.08           # time the tip rests on the glass during a tap
   drag_feed: 2500             # mm/min for pen-down drags (was 1500)
   travel_feed: 6000           # mm/min for pen-up moves (was 3000; motor-capped on diagonals by Grbl._corexy_feed). G0 at $110=8000 skipped steps on diagonals (CoreXY runs one motor at up to 2x); raise slowly once runs are clean
-  axis_moves: false           # false = straight diagonal moves (2026-11-16). true = X then Y, the fallback if the X+Y motor slips again; also applies to drags
+  axis_moves: true            # true = X then Y, no diagonals (back on 2026-11-23: first live game missed its first target after a +X+Y diagonal). false = diagonal moves (fast, but the X+Y motor slipped on 2026-11-11); also applies to drags
   jog_step_mm: 5
 
 layout:
@@ -68,6 +68,16 @@ stability:
   read_timeout_s: 3.0         # give up on a stable read after this long (mirror dropped, menu on screen)
   change_timeout_s: 2.0       # after a tap, wait this long for the board to change before calling it a miss
   frame_interval_s: 0.0       # pause between reads; 0 = as fast as detection runs
+
+game:
+  # The control loop (solitaire/main.py).
+  max_unreadable: 5           # consecutive failed stable reads (stability.read_timeout_s each) before stopping
+  max_missed_moves: 2         # retries when a move leaves the board unchanged; then re-aim (live, asks you) or stop
+  retry_nudges: [0.0, 0.3, -0.3]  # try k touches the card this fraction of its box height lower (+) / higher (-): drift of a few mm lands on the neighbour strip
+  press_finish: true          # press Finish when the solver is stuck (false = just stop)
+  bounds_margin_mm: 2         # the plotter refuses targets closer than this to the screen edge
+  log_dir: runs/games         # one log per game: every move, and every move that landed somewhere unexpected
+  misread_dir: captures/misreads  # frames the detector misread (vs the stable board), PNG + JSON, for labelling
 
 solver:
   max_recycles: null          # times the waste can go back into the stock; null = unknown (README §6 TODO), only "stuck" stops it

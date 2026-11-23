@@ -74,11 +74,17 @@ class Executor:
             return self._frac(lay["column_x"][move.dst_index], lay["tableau_top_y"] + lay["card_height"] / 2)
         raise ValueError(f"no destination point for {move}")
 
-    def plan(self, move: Move, state: GameState) -> Action:
-        """Where to touch for this move, on the board it was chosen on."""
+    def plan(self, move: Move, state: GameState, nudge: float = 0.0) -> Action:
+        """Where to touch for this move, on the board it was chosen on.
+
+        nudge shifts the touch on the card down (+) or up (-) by that fraction of its
+        box height; the game loop uses it to retry a tap that changed nothing. A covered
+        card's box is exactly its visible band (~80 px = ~8 mm), so a few mm of drift can
+        land on the card above or below."""
         if move.is_stock:
             return self._action("tap", [self.stock_point(state)], str(move))
-        src = move.card.det.center_px
+        d = move.card.det
+        src = (d.center_px[0], d.center_px[1] + nudge * (d.y2_px - d.y1_px))
         if move.method == "tap":
             return self._action("tap", [src], str(move))
         return self._action("drag", [src, self.destination_point(state, move)], str(move))
@@ -99,6 +105,13 @@ class Executor:
             self.plotter.drag(x0, y0, x1, y1)
         else:
             raise ValueError(f"unknown action kind {action.kind!r}")
+
+    def hover(self, action: Action) -> None:
+        """Move the raised pencil over the action's first point, without touching."""
+        if self.plotter is None:
+            raise RuntimeError("no plotter connected (dry run)")
+        self.plotter.pen_up()
+        self.plotter.move_to(*action.points_mm[0])
 
     def execute(self, move: Move, state: GameState) -> Action:
         action = self.plan(move, state)
