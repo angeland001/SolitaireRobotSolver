@@ -25,7 +25,7 @@ A pen plotter holds an Apple Pencil Pro over an iPad and plays Klondike Solitair
 
 - **Kits ship with the wrong firmware.** The stock board ran plain GRBL v0.9i without CoreXY, so moving X also moved Y. Run `$I` to confirm the board reports 1.1h, then make one X move and one Y move and check that each moves only one axis.
 - **CoreXY:** both motors work together on every move, so if one motor is weaker (bad VREF), the result is skewed diagonal motion, not just one slow axis. If moves come out diagonal or lose steps, check VREF first.
-- **CoreXY diagonals run one motor at double speed.** GRBL caps X and Y separately (`$110/$111` = 8000 mm/min), so a G0 diagonal drives one motor at up to 16000 mm/min, and it skipped steps (2026-11-11: calibration check taps off by ~40 mm, **equal in X and Y**, the signature of one motor slipping). Pen-up moves therefore use `G1` at `plotter.travel_feed` (3000 mm/min), not `G0`. That alone wasn't enough: the **X+Y motor** still slipped on +X+Y diagonals, where it runs 1.41× the feed rate. So the driver now caps **motor** speed: every move and drag is slowed until the busier motor runs at no more than the feed rate (`Grbl._corexy_feed`; straight moves keep full speed, 45° diagonals drop to ~71%). That didn't fix it either, so **`plotter.axis_moves: true` (default) makes every move and drag go X first, then Y**. No move is diagonal, and straight moves never slipped. It costs a little time per move. Equal X/Y errors = one CoreXY motor slipping. If it still happens, lower `$120/$121` (acceleration, now 1200), then check that motor's VREF.
+- **CoreXY diagonals run one motor at double speed.** GRBL caps X and Y separately (`$110/$111` = 8000 mm/min), so a G0 diagonal drives one motor at up to 16000 mm/min, and it skipped steps (2026-11-11: calibration check taps off by ~40 mm, **equal in X and Y**, the signature of one motor slipping). Pen-up moves therefore use `G1` at `plotter.travel_feed` (3000 mm/min), not `G0`. That alone wasn't enough: the **X+Y motor** still slipped on +X+Y diagonals, where it runs 1.41× the feed rate. So the driver now caps **motor** speed: every move and drag is slowed until the busier motor runs at no more than the feed rate (`Grbl._corexy_feed`; straight moves keep full speed, 45° diagonals drop to ~71%). That didn't fix it either, so **`plotter.axis_moves: true` (default) makes every move and drag go X first, then Y**. No move is diagonal, and straight moves never slipped. It costs a little time per move. **2026-11-16: diagonals back on** (`axis_moves: false`) and feeds raised (`travel_feed` 6000, `drag_feed` 2500 mm/min), with the motor-speed cap still applied. If check taps drift again, set `axis_moves: true` first, then lower the feeds. Equal X/Y errors = one CoreXY motor slipping. If it still happens, lower `$120/$121` (acceleration, now 1200), then check that motor's VREF.
 - **GRBL settings:** dump them with `$$` and save a copy to `config/grbl_settings.txt` so a reflashed board can be restored. The reference build's tuned settings were only shown as a screenshot; ours are the ones to trust. Settings guide: [Grbl v1.1 Configuration](https://github.com/gnea/grbl/wiki/Grbl-v1.1-Configuration).
 - **No homing = no fixed origin.** Without limit switches, `(0,0)` is wherever the gantry was at power-on or reset. **Rule: the session starts by jogging to a physical reference corner and running `G92 X0 Y0`, then calibration (§3.2).** Adding limit switches to the CNC Shield's END STOP pins (as the reference author did) would make this repeatable and enable `$H`. It's optional, but a cheap upgrade.
 - **Pen stability matters most** ("make sure the pen is stable", the author's top tip). For us that means the Pencil mount must not wobble or flex, or taps will land off-target or fail to register.
@@ -106,6 +106,22 @@ Plan:
 3. Evaluate the open-source solvers above as a plug-in "planner" behind the same interface.
 
 Whatever the solver is, the interface stays: `choose_move(state) -> Move | None`.
+
+**v1 as built (2026-11-23, `solitaire/solver/`):**
+- `legal_moves(state)` lists every legal move on the visible board (waste/tableau → foundation, waste → tableau, any face-up run → tableau, then a stock tap: draw, or recycle when the stock shows the recycle icon). Foundation → tableau is left out. Each `Move` is marked **`tap`** when the app's tap rule (`tap_destination`: foundation first, else left-most legal column) sends the card where we want, otherwise **`drag`**. A `Move` carries the `PlacedCard` to touch (the run's top-most card) and pile indices, no coordinates; the executor turns it into pixels.
+- `Solver.choose_move(state)` scores the non-stock moves (weights in `settings.yaml` → `solver.weights`): foundation moves, more if *safe* (no tableau card could still need it); moves that reveal a face-down card, more for deeper columns; emptying a column **only** while a King is waiting for it; splitting a run **only** to free a card for the foundation; waste → tableau; minus a penalty for drags. Moves that achieve none of these get no score, which also keeps it from shuffling cards back and forth. With nothing scored it taps the stock. It returns **`None` (press Finish)** when it would recycle with nothing played since the last recycle (the next pass would deal the same cards), or when `solver.max_recycles` is used up. A new `Solver` allows one recycle first, since it may join mid-game. It refuses (`ValueError`) to plan on an invalid state.
+- The game loop keeps one `Solver` and calls `solver.executed(move)` after each move is verified on screen.
+- Offline check: `python tools/solve_states.py --image <screenshot>` prints the board and every scored move; without `--image` it tallies the chosen move over the dataset (2026-11-23: all 277 valid labelled boards get a move, every pick is a tap). Unit tests: `python -m pytest tests`.
+
+**Open-source solvers checked for v2 (2026-11-23).** None of them handles hidden cards the way we need, so they would go behind the planner interface, fed one or more *sampled* deals that match what's visible (§3.4 plan 2–3):
+| Project | Language | Use for us |
+|---|---|---|
+| [ShootMe/Klondike-Solver](https://github.com/ShootMe/Klondike-Solver) | C++ | Fast, solves known deals, supports draw 3. Most likely candidate |
+| [pyksolve](https://pyksolve.readthedocs.io/en/stable/pyksolve.html) ([repo](https://github.com/tcdude/py-klondike-solver)) | Python (Cython wrapper of the above) | Easiest to call from here; `Solitaire(draw_count=3)`. Check that it builds on Python 3.14 |
+| [lonelybot](https://github.com/vuonghy2442/lonelybot) | Rust | Solves "thoughtful" (all cards known) and *random* Klondike, the closest match to our hidden-card problem |
+| [Solvitaire](https://github.com/thecharlieblake/Solvitaire) | C++ | General patience solver; perfect information only |
+| [scottwillmoore/klondike](https://github.com/scottwillmoore/klondike) | Rust | Thoughtful Klondike engine |
+| [Blake & Gent, *Winnability of Klondike*](https://arxiv.org/abs/1906.12314) | paper | Background: ~82% of thoughtful deals are winnable; methods for hidden-card play |
 
 ### 3.5 Game flow (control loop)
 
@@ -234,13 +250,14 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 
 - **Vision:** YOLO model `models/cards.pt` reads boards at ~99.5% card-level accuracy. The owner has decided it's good enough for now (300 more images are already annotated if the shimmer/"$" errors become a real problem; retrain then). `StateBuilder` turns detections into a validated `GameState`.
 - **Capture:** iPad mirrored with **AirServer** (the free receiver kept dropping). Crop works (aspect OK), including the iPad's black status bar.
-- **Plotter:** GRBL 1.1h on `COM7`, auto-detected by USB ID. Axes: +X = screen down, +Y = screen right. Pen down `M3 S90` registers taps. **Moves go X then Y, never diagonally** (`axis_moves`): diagonals made one CoreXY motor slip (§1.1).
+- **Plotter:** GRBL 1.1h on `COM7`, auto-detected by USB ID. Axes: +X = screen down, +Y = screen right. Pen down `M3 S90` registers taps. **Moves go diagonally** (`axis_moves: false`, since 2026-11-16) at motor-capped feeds; set `axis_moves: true` to go X then Y if a CoreXY motor slips again (§1.1).
 - **Calibration:** `config/calibration.json` saved 2026-11-11. Check taps land within 14 px (~1.4 mm). The zero is the plotter's power-on position over the iPad's top-left. After a reset, run `calibrate.py --rezero`.
-- **Not built yet:** solver, executor (move → tap), the main control loop. `solitaire/solver/` and `solitaire/main.py` don't exist.
+- **Solver v1** (2026-11-23): `solitaire/solver/`, heuristic ranking + tap/drag prediction (§3.4). Tested offline only.
+- **Not built yet:** multi-frame agreement, executor (move → tap), the main control loop (`solitaire/main.py`).
 
 **Next steps, in order** (the plotter isn't needed until step 4):
 1. **Multi-frame agreement + wait-until-stable:** accept a state only when 2–3 consecutive reads match and are valid (§3.5, §4.1 fix 1).
-2. **Solver v1** in `solitaire/solver/`: legal-move generator, heuristic ranking (§3.4), and a prediction of where a tapped card will go (foundation first, else the left-most legal column, §3.3). Interface: `choose_move(state) -> Move | None`.
+2. ~~Solver v1~~ done (§3.4). Tune `solver.weights` once real games are played.
 3. **Executor:** `Move` → tap the card's visible strip (or a drag fallback) → `Calibration.px_to_mm` → `Grbl.tap`/`drag`.
 4. **`solitaire/main.py`**: the §3.5 loop. Start with `--dry-run` (prints the chosen move over the live mirror, no plotter), then live play with verify-after-tap.
 5. Optional robustness: detect when the mirror drops (black/idle frame) and pause, not tap blind.
@@ -265,7 +282,7 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 - [x] Train / val / test split (224 / 42 / 42)
 - [ ] Fix dataset label mistakes flagged in `runs/state_issues_labels_all.txt`, then retrain on the new split and score on test
 - [ ] Multi-frame agreement: accept a state only when 2–3 consecutive reads match and are valid
-- [ ] Heuristic solver v1
+- [x] Heuristic solver v1 (`solitaire/solver/`, `tools/solve_states.py`, `tests/test_solver.py`)
 - [ ] End-to-end loop on a real game
 - [ ] Lookahead solver v2 / external solver integration
 

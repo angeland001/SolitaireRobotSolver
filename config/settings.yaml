@@ -23,9 +23,9 @@ plotter:
   pen_down: "M3 S90"
   servo_settle_s: 0.15        # wait after a pen move so the servo arrives
   tap_dwell_s: 0.08           # time the tip rests on the glass during a tap
-  drag_feed: 1500             # mm/min for pen-down drags
-  travel_feed: 3000           # mm/min for pen-up moves. G0 at $110=8000 skipped steps on diagonals (CoreXY runs one motor at up to 2x); raise slowly once runs are clean
-  axis_moves: true            # move X then Y, never diagonally (diagonals made the X+Y motor slip); also applies to drags
+  drag_feed: 2500             # mm/min for pen-down drags (was 1500)
+  travel_feed: 6000           # mm/min for pen-up moves (was 3000; motor-capped on diagonals by Grbl._corexy_feed). G0 at $110=8000 skipped steps on diagonals (CoreXY runs one motor at up to 2x); raise slowly once runs are clean
+  axis_moves: false           # false = straight diagonal moves (2026-11-16). true = X then Y, the fallback if the X+Y motor slips again; also applies to drags
   jog_step_mm: 5
 
 layout:
@@ -53,6 +53,18 @@ vision:
   workers: 2
   weights: models/cards.pt    # best weights copied here after training
   conf_threshold: 0.5
+
+solver:
+  max_recycles: null          # times the waste can go back into the stock; null = unknown (README §6 TODO), only "stuck" stops it
+  weights:                    # heuristic scores (solitaire/solver/heuristic.py); higher = played first
+    foundation: 60            # any card to a foundation (the app's points)
+    safe_foundation: 40       # extra when no tableau card could still need it (Aces, 2s, or opposite colours caught up)
+    reveal: 50                # move turns over a face-down card
+    reveal_per_hidden: 5      # extra per face-down card in that column (dig the deepest first)
+    empty_column_for_king: 30 # empty a column while a King is waiting for it
+    unblock_foundation: 25    # split a run so the card under it can go to a foundation
+    waste_to_tableau: 20
+    drag_penalty: 5           # a drag is slower than a tap (5-minute clock)
 
 calibration:
   max_check_error_px: 30      # calibrate.py refuses to save if a check tap misses by more (a card strip is ~60 px tall)

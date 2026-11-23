@@ -5,3 +5,4 @@ opencv-python
 pyyaml
 numpy
 pyserial
+pytest
