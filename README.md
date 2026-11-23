@@ -90,6 +90,7 @@ The game has a 5-minute clock, so speed matters. A tap is one short pen-down; a 
 - **Drag fallback:** when a card has more than one legal destination and the app would pick the wrong one, drag instead: pen down on the source → `G1` to the destination → pen up.
 - **Always verify:** after each tap, re-read the screen and confirm the card landed where expected. Record each mismatch so the model of the app's tap rules (§6) gets better.
 - Tap timing: pen down → dwell ~50–100 ms → pen up. Tune the dwell until taps register every time without being taken as a long-press.
+- **Executor (built 2026-11-23, `solitaire/executor.py`):** `Executor.plan(move, state) -> Action` is pure: it picks the touch points in normalised px and converts them with `Calibration.px_to_mm`. A card is touched at the centre of its box (for a covered card that's its visible strip). A drag ends on the destination's exposed card, or for an empty column at `layout.tableau_top_y + card_height/2`. The stock is its box, or `layout.stock_x/stock_y` when it shows the recycle icon. `plan_button("finish"|"undo")` uses `layout.finish_button/undo_button`. Points off the screen are refused (`ValueError`). `perform(action)` sends it to `Grbl.tap`/`drag`; with `plotter=None` it only plans (dry run). `solve_states.py --image` prints the planned action in px and mm. **Untested on hardware:** whether the app accepts a drag that starts moving straight after pen-down (it may need a short hold first), and the Finish/Undo positions, which were read off one screenshot.
 
 ### 3.4 Solver strategy
 
@@ -161,6 +162,7 @@ SolitaireRobotSolver/
 │   ├── state/               # Card, GameState, StateBuilder (layout + rule checks)
 │   ├── solver/              # move generation, heuristics, planners
 │   ├── calibration/         # homography fit, touch-logger page
+│   ├── executor.py          # Move → touch points (px → mm) → plotter tap/drag (§3.3)
 │   └── main.py              # the control loop (§3.5)
 ├── tools/                   # jog utility, screenshot capture, label helpers
 ├── models/                  # trained YOLO weights (git-ignored if large)
@@ -255,12 +257,13 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 - **Calibration:** `config/calibration.json` saved 2026-11-11. Check taps land within 14 px (~1.4 mm). The zero is the plotter's power-on position over the iPad's top-left. After a reset, run `calibrate.py --rezero`.
 - **Solver v1** (2026-11-23): `solitaire/solver/`, heuristic ranking + tap/drag prediction (§3.4). Tested offline only.
 - **Multi-frame agreement** (2026-11-23): `StableReader` in `solitaire/state/stable.py` (§4.2). Unit-tested; not yet watched on a live game.
-- **Not built yet:** executor (move → tap), the main control loop (`solitaire/main.py`).
+- **Executor** (2026-11-23): `solitaire/executor.py` (§3.3). Unit-tested with a fake plotter; not yet run on the plotter.
+- **Not built yet:** the main control loop (`solitaire/main.py`).
 
 **Next steps, in order** (the plotter isn't needed until step 4):
 1. ~~Multi-frame agreement + wait-until-stable~~ done (§4.2). Check it live: `live_view.py` should show `STABLE` between moves and never print a half-animated board.
 2. ~~Solver v1~~ done (§3.4). Tune `solver.weights` once real games are played.
-3. **Executor:** `Move` → tap the card's visible strip (or a drag fallback) → `Calibration.px_to_mm` → `Grbl.tap`/`drag`.
+3. ~~Executor~~ done (§3.3). The loop must build `Grbl` with `bounds_mm=calibration.screen_bounds_mm(...)` so a bad point can never drive the pencil off the glass.
 4. **`solitaire/main.py`**: the §3.5 loop. Start with `--dry-run` (prints the chosen move over the live mirror, no plotter), then live play with verify-after-tap.
 5. Optional robustness: detect when the mirror drops (black/idle frame) and pause, not tap blind.
 

@@ -11,7 +11,9 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from solitaire.calibration import Calibration  # noqa: E402
 from solitaire.config import load_settings  # noqa: E402
+from solitaire.executor import Executor  # noqa: E402
 from solitaire.solver import Solver, rank_moves  # noqa: E402
 from solitaire.state import StateBuilder  # noqa: E402
 from solitaire.vision.dataset import class_names, label_detections, split_images  # noqa: E402
@@ -46,7 +48,10 @@ def main():
             return
         for score, move in rank_moves(state, settings["solver"]["weights"]):
             print(f"  {score:6.1f}  {move}")
-        print(f"\nchosen: {Solver(settings).choose_move(state)}")
+        move = Solver(settings).choose_move(state)
+        executor = Executor(Calibration.load(), None, settings)
+        action = executor.plan(move, state) if move else executor.plan_button("finish")
+        print(f"\nchosen: {move}\nplotter: {action}")
         return
 
     kinds, shown, valid = Counter(), 0, 0
