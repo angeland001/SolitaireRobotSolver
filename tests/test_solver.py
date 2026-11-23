@@ -1,42 +1,12 @@
 """Solver v1 on hand-built boards. Run: python -m pytest tests"""
-import sys
-from pathlib import Path
-
 import pytest
+from boards import board
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from solitaire.config import load_settings  # noqa: E402
-from solitaire.solver import Solver, legal_moves  # noqa: E402
-from solitaire.state import Card, Column, GameState, PlacedCard  # noqa: E402
-from solitaire.vision.detection import FACEDOWN, Detection  # noqa: E402
+from solitaire.config import load_settings
+from solitaire.solver import Solver, legal_moves
+from solitaire.state import GameState
 
 SETTINGS = load_settings()
-
-
-def det(label: str) -> Detection:
-    return Detection(label, 1.0, 0, 0, 0, 0)
-
-
-def placed(label: str) -> PlacedCard:
-    return PlacedCard(Card.parse(label), det(label))
-
-
-def board(tableau: list[str], foundations: str = "", waste: str = "", stock: bool = True) -> GameState:
-    """tableau: one string per column, '#' per face-down card then face-up labels,
-    e.g. '## 9s 8h'. foundations: top cards, e.g. 'Ah 2s'."""
-    cols = []
-    for spec in tableau + [""] * (7 - len(tableau)):
-        words = spec.split()
-        down = [w for w in words if set(w) == {"#"}]
-        n_down = sum(len(w) for w in down)
-        cols.append(Column([det(FACEDOWN)] * n_down, [placed(w) for w in words if w not in down]))
-    f = [placed(w) for w in foundations.split()]
-    return GameState(
-        foundations=f + [None] * (4 - len(f)),
-        waste=[placed(w) for w in waste.split()],
-        stock=det(FACEDOWN) if stock else None,
-        tableau=cols,
-    )
 
 
 def best(state: GameState, solver: Solver | None = None):

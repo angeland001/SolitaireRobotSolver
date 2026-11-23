@@ -1,7 +1,8 @@
 """Live card detection on the mirrored iPad screen.
 
 Shows the normalised screen with detections, layout guides and the parsed
-game state. The console prints the state whenever it changes.
+game state. The console prints the board whenever a new one becomes stable
+(stability.agree_frames consecutive valid reads agree).
 
 Keys (in the video window):  q quit | s save frame to captures/ | g toggle guides
 
@@ -22,7 +23,7 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from solitaire.capture import ScreenNormalizer, list_windows, open_source  # noqa: E402
 from solitaire.config import REPO_ROOT, load_settings  # noqa: E402
-from solitaire.state import StateBuilder  # noqa: E402
+from solitaire.state import StabilityTracker, StateBuilder  # noqa: E402
 from solitaire.vision import CardDetector  # noqa: E402
 
 GREEN, GREY, RED, YELLOW, WHITE = (0, 200, 0), (150, 150, 150), (0, 0, 255), (0, 220, 255), (255, 255, 255)
@@ -39,7 +40,7 @@ class StillSource:
         pass
 
 
-def draw(screen, dets, state, layout, guides, fps):
+def draw(screen, dets, state, layout, guides, fps, tracker):
     img = screen.image.copy()
     h, w = img.shape[:2]
     if guides:
@@ -59,7 +60,9 @@ def draw(screen, dets, state, layout, guides, fps):
     lines = [
         f"{fps:4.1f} fps | crop {cw}x{ch} aspect {screen.aspect:.4f} "
         + ("OK" if screen.aspect_ok else "MISMATCH (expected 0.6949)"),
-        "state: VALID" if state.is_valid else f"state: INVALID - {state.issues[0]}",
+        ("state: VALID, " +("STABLE" if tracker.streak >= tracker.agree_frames
+                              else f"settling {tracker.streak}/{tracker.agree_frames}"))
+        if state.is_valid else f"state: INVALID - {state.issues[0]}",
     ]
     for i, text in enumerate(lines):
         y = h - 70 + i * 40
@@ -100,6 +103,7 @@ def main():
     normalizer = ScreenNormalizer(settings["screen"], cfg)
     detector = CardDetector(conf=args.conf)
     builder = StateBuilder()
+    tracker = StabilityTracker(settings["stability"]["agree_frames"])
     layout = settings["layout"]
     save_dir = REPO_ROOT / "captures"
 
@@ -111,15 +115,15 @@ def main():
             dets = detector.detect(screen.image)
             state = builder.build(dets, screen.image.shape[1], screen.image.shape[0])
 
-            text = str(state)
-            if text != last_state:
-                print(f"\n[{datetime.now():%H:%M:%S}] {len(dets)} boxes\n{text}")
-                last_state = text
+            stable = tracker.push(state)
+            if stable is not None and stable.signature != last_state:
+                print(f"\n[{datetime.now():%H:%M:%S}] stable board, {len(dets)} boxes\n{stable}")
+                last_state = stable.signature
 
             now = time.perf_counter()
             fps = 0.8 * fps + 0.2 / max(now - t_prev, 1e-6)
             t_prev = now
-            view = draw(screen, dets, state, layout, guides, fps)
+            view = draw(screen, dets, state, layout, guides, fps, tracker)
             scale = args.display_height / view.shape[0]
             cv2.imshow("live", cv2.resize(view, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA))
 

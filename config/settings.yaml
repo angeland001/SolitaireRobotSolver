@@ -54,6 +54,14 @@ vision:
   weights: models/cards.pt    # best weights copied here after training
   conf_threshold: 0.5
 
+stability:
+  # Multi-frame agreement (solitaire/state/stable.py): trust a board only after this many
+  # consecutive valid reads agree. Removes shimmer misreads and mid-animation frames.
+  agree_frames: 3
+  read_timeout_s: 3.0         # give up on a stable read after this long (mirror dropped, menu on screen)
+  change_timeout_s: 2.0       # after a tap, wait this long for the board to change before calling it a miss
+  frame_interval_s: 0.0       # pause between reads; 0 = as fast as detection runs
+
 solver:
   max_recycles: null          # times the waste can go back into the stock; null = unknown (README §6 TODO), only "stuck" stops it
   weights:                    # heuristic scores (solitaire/solver/heuristic.py); higher = played first

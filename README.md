@@ -202,6 +202,7 @@ What the errors have in common: most land on cards wearing the app's **holograph
   - tableau: 7 columns, with each box matched to the nearest column centre within ±0.035 of screen width.
 - `GameState` holds `foundations` (top card per slot), `waste`, `stock` (a face-down box, or `None` when the recycle icon shows), `tableau` (per column: face-down strips, then face-up cards top to bottom), and `issues`. Each card keeps its `Detection`, so the executor can tap its visible strip.
 - **Validation never raises.** Problems go in `state.issues`, and `state.is_valid` is the gate: the loop doesn't act on an invalid state, it waits and re-reads. Checks: a card seen twice; a tableau run that breaks descending/alternating order; a face-down card below a face-up one; a column ending face-down (flip pending); a box between columns (card in motion); two foundations of one suit; a card visible that should be buried in a foundation; more than 3 waste cards.
+- **Multi-frame agreement** (`solitaire/state/stable.py`, settings `stability:`): a board is trusted only once `agree_frames` (3) consecutive reads are valid and have the same `GameState.signature` (the cards in every pile, ignoring box positions and confidences). That removes both shimmer misreads (§4.1 fix 1) and mid-animation frames. `StabilityTracker` is the pure part; `StableReader(read_state)` loops over frames with timeouts: `read()` returns a stable board or `None` after `read_timeout_s` (mirror dropped, menu on screen; `last_issues` says why), and `read_change(before)` waits up to `change_timeout_s` for a stable board that *differs* from `before`, returning `(state, changed)`. `changed=False` means the tap didn't register. `live_view.py` shows `STABLE` / `settling n/3` and prints the board only when a new one settles.
 - `python tools/check_states.py [--source labels|model] [--split all|val] [--image PATH]` runs the builder over the dataset and writes per-image issues to `runs/state_issues_*.txt`. Results (2026-10-22): **labels 277/308 valid, model 280/308 valid**. The failures are:
   - **mid-animation frames** (a card in flight shows up twice or between columns). Expected; the loop handles them by waiting.
   - the app's **pre-game prize-pick screen** (4 cards in a row at mid-screen). Not a board. **The robot starts only once a dealt board is on screen; menus and pre-game screens are handled by a person.**
@@ -253,10 +254,11 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 - **Plotter:** GRBL 1.1h on `COM7`, auto-detected by USB ID. Axes: +X = screen down, +Y = screen right. Pen down `M3 S90` registers taps. **Moves go diagonally** (`axis_moves: false`, since 2026-11-16) at motor-capped feeds; set `axis_moves: true` to go X then Y if a CoreXY motor slips again (§1.1).
 - **Calibration:** `config/calibration.json` saved 2026-11-11. Check taps land within 14 px (~1.4 mm). The zero is the plotter's power-on position over the iPad's top-left. After a reset, run `calibrate.py --rezero`.
 - **Solver v1** (2026-11-23): `solitaire/solver/`, heuristic ranking + tap/drag prediction (§3.4). Tested offline only.
-- **Not built yet:** multi-frame agreement, executor (move → tap), the main control loop (`solitaire/main.py`).
+- **Multi-frame agreement** (2026-11-23): `StableReader` in `solitaire/state/stable.py` (§4.2). Unit-tested; not yet watched on a live game.
+- **Not built yet:** executor (move → tap), the main control loop (`solitaire/main.py`).
 
 **Next steps, in order** (the plotter isn't needed until step 4):
-1. **Multi-frame agreement + wait-until-stable:** accept a state only when 2–3 consecutive reads match and are valid (§3.5, §4.1 fix 1).
+1. ~~Multi-frame agreement + wait-until-stable~~ done (§4.2). Check it live: `live_view.py` should show `STABLE` between moves and never print a half-animated board.
 2. ~~Solver v1~~ done (§3.4). Tune `solver.weights` once real games are played.
 3. **Executor:** `Move` → tap the card's visible strip (or a drag fallback) → `Calibration.px_to_mm` → `Grbl.tap`/`drag`.
 4. **`solitaire/main.py`**: the §3.5 loop. Start with `--dry-run` (prints the chosen move over the live mirror, no plotter), then live play with verify-after-tap.
@@ -281,7 +283,7 @@ Run everything from the repo folder with the venv's Python (`$py = "$env:USERPRO
 - [x] GameState builder + validation (§4.2)
 - [x] Train / val / test split (224 / 42 / 42)
 - [ ] Fix dataset label mistakes flagged in `runs/state_issues_labels_all.txt`, then retrain on the new split and score on test
-- [ ] Multi-frame agreement: accept a state only when 2–3 consecutive reads match and are valid
+- [x] Multi-frame agreement: accept a state only when 3 consecutive reads match and are valid (`StableReader`, `tests/test_stable.py`)
 - [x] Heuristic solver v1 (`solitaire/solver/`, `tools/solve_states.py`, `tests/test_solver.py`)
 - [ ] End-to-end loop on a real game
 - [ ] Lookahead solver v2 / external solver integration

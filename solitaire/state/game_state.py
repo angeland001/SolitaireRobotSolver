@@ -65,6 +65,17 @@ class GameState:
         return set(FULL_DECK) - seen
 
     @property
+    def signature(self) -> tuple:
+        """What the board holds, ignoring box positions and confidences. Two reads of the
+        same, settled screen have equal signatures."""
+        return (
+            tuple(str(p) if p else None for p in self.foundations),
+            tuple(str(p) for p in self.waste),
+            self.stock is not None,
+            tuple((len(c.facedown), tuple(str(p) for p in c.faceup)) for c in self.tableau),
+        )
+
+    @property
     def is_won(self) -> bool:
         return all(p and p.card.rank == 13 for p in self.foundations)
 
