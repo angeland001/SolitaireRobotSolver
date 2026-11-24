@@ -131,3 +131,45 @@ def test_landed():
     move = next(m for m in legal_moves(START) if str(m.card) == "Ah")
     assert landed(move, START, AFTER_ACE)
     assert not landed(move, START, START)
+
+
+# Once no tableau card is face down the app sorts the rest by itself at some point (exact
+# condition unknown), so the loop keeps playing and a blank screen after such a move is the win.
+LAST_FLIP = board(["# 5c", "Kd"], foundations="4c 4d")             # 5c up turns the last card over
+ALL_UP_STOCK_LEFT = board(["Qs", "Kd"], foundations="5c 4d")
+ALL_UP_WASTE_LEFT = board(["Qs", "Kd"], foundations="5c 4d", waste="7s 10s 4h", stock=False)
+
+
+def test_last_flip_then_blank_screen_is_a_win():
+    gl, ex = loop([LAST_FLIP, None])
+    assert gl.run().startswith("won") and len(ex.done) == 1
+
+
+def test_all_face_up_keeps_playing_until_the_app_takes_over():
+    # Games 2 and 3, 2026-11-24: it stopped on boards like these, but the app hadn't finished.
+    gl, ex = loop([ALL_UP_STOCK_LEFT, ALL_UP_WASTE_LEFT, None])
+    assert gl.run().startswith("won") and len(ex.done) == 2
+
+
+def test_stock_empty_waste_left_keeps_playing():
+    gl, ex = loop([ALL_UP_WASTE_LEFT, None])
+    assert gl.run().startswith("won") and len(ex.done) == 1
+
+
+def test_blank_screen_mid_game_is_not_a_win():
+    gl, ex = loop([START, None])
+    assert not gl.run().startswith("won")
+
+
+def test_dry_run_last_flip_is_a_win():
+    gl, ex = loop([LAST_FLIP, None], dry_run=True)
+    assert gl.run().startswith("won")
+
+
+def test_a_move_that_mismatched_is_not_tried_again():
+    # 2026-11-24: an undetected waste top made "Qd W->c5" fail every pass.
+    elsewhere = board(["## 9s", "## Ah"])          # the tap changed the board, Ah didn't go up
+    gl, ex = loop([START, elsewhere, START, WON])   # ... and the same board comes back
+    assert gl.run() == "won" and gl.mismatches == 1
+    assert gl.solver.blocked == {("Ah", "tableau", "foundation", 0)}
+    assert ex.done[0].startswith("tap Ah") and not ex.done[-1].startswith("tap Ah")

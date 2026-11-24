@@ -103,6 +103,15 @@ class MisreadRecorder:
         if len(self.stable_images) == 2:
             self._save(before, self.stable_images[0], [(true, read)], "mismatch")
 
+    def save_mismatch_frames(self, before: GameState, after: GameState, note: str) -> None:
+        """Every MISMATCH whose misread card can't be named (mismatch_confusion found no
+        pair): saves the board before and after the move, so a person can see what was
+        really there. Seen 2026-11-24: the top waste card (8d) went undetected and the
+        card under it (Qd) was taken for the top, so every tap played the wrong card."""
+        if len(self.stable_images) == 2:
+            self._save(before, self.stable_images[0], [], "mismatch", note + " (board before the move)")
+            self._save(after, self.stable_images[1], [], "mismatch", note + " (board after the move)")
+
     def settled(self, stable: GameState) -> list[tuple[str, str]]:
         frames = list(self.frames)
         self.frames.clear()
@@ -130,12 +139,14 @@ class MisreadRecorder:
                 found += pairs
         return found
 
-    def _save(self, state: GameState, image: np.ndarray, pairs: list[tuple[str, str]], kind: str) -> None:
+    def _save(self, state: GameState, image: np.ndarray, pairs: list[tuple[str, str]], kind: str,
+              note: str = "") -> None:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         stem = self.out_dir / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{kind}"
         cv2.imwrite(str(stem.with_suffix(".png")), image)
         stem.with_suffix(".json").write_text(json.dumps({
             "kind": kind,
+            "note": note,
             "confusions": [{"true": t, "read": r} for t, r in pairs],
             "issues": state.issues,
             "board": str(state),

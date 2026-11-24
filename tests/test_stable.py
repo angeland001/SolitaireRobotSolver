@@ -69,3 +69,26 @@ def test_read_change_reports_a_missed_tap():
     script = Script([A])
     state, changed = script.reader().read_change(A)
     assert not changed and state is A
+
+
+def test_tracker_skips_a_few_invalid_reads_between_agreeing_ones():
+    # A covered strip the detector finds only on some frames (6d, 2026-11-24).
+    t = StabilityTracker(3, max_invalid_between=2)
+    for s in (A, BAD, A, BAD, BAD):
+        assert t.push(s) is None
+    assert t.push(A) is A
+
+
+def test_tracker_starts_over_after_too_many_invalid_reads():
+    t = StabilityTracker(3, max_invalid_between=2)
+    for s in (A, A, BAD, BAD, BAD, A, A):
+        assert t.push(s) is None
+    assert t.push(A) is A
+
+
+def test_read_change_after_a_change_that_never_settles_is_not_a_miss():
+    # The tap registered (the screen changed) but the new board never settled: the loop
+    # must re-read, not touch the screen again.
+    script = Script([A, A, A, B, BAD, B, BAD])
+    state, changed = script.reader().read_change(A)
+    assert state is None and not changed

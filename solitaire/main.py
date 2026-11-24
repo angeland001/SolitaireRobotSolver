@@ -7,7 +7,8 @@ check the board changed the way it should, repeat.
 Start it on a dealt board (menus and the pre-game screen are for a person).
 Stop it any time with Ctrl+C; the pencil lifts and parks on the zero.
 
-The loop stops when the board is won, when the solver is stuck (it presses Finish
+The loop stops when the board is won (or no face-down card is left: the app then
+sorts the rest onto the foundations by itself), when the solver is stuck (it presses Finish
 first if game.press_finish), when no stable board can be read game.max_unreadable
 times in a row, or when a move leaves the board unchanged more than
 game.max_missed_moves times (the tap didn't register: check pen-down, or re-zero).
@@ -36,6 +37,28 @@ def landed(move: Move, before: GameState, after: GameState) -> bool:
     if move.dst == TABLEAU:
         return any(p.card == card for p in after.tableau[move.dst_index].faceup)
     return False
+
+
+def facedown_left(state: GameState) -> int:
+    return sum(len(col.facedown) for col in state.tableau)
+
+
+def may_trigger_auto_finish(move: Move, state: GameState) -> bool:
+    """After this move no tableau card is face down (it already was so, or the move turns
+    the last one over). At some point after that the app sorts the rest onto the
+    foundations by itself, but its exact condition is unknown: game 1 (2026-11-24) it did
+    with the stock empty and 1 card on the waste; games 2 and 3 it didn't, with cards left
+    in the stock, or the stock empty and 8 cards on the waste. So the loop never stops on
+    a board it can read: it keeps playing, and a board that can't be read after such a
+    move is taken as the app's finishing animation and win screen."""
+    left = facedown_left(state)
+    if left == 0:
+        return True
+    return (left == 1 and not move.is_stock and move.src == TABLEAU and move.src_depth == 0
+            and bool(state.tableau[move.src_index].facedown))
+
+
+AUTO_WON = "won (the app sorted the rest of the board by itself)"
 
 
 class GameLoop:
@@ -109,6 +132,8 @@ class GameLoop:
                 self.log("   (dry run: play it by hand)")
                 after, changed = self._read_change(state)
                 while not changed:
+                    if after is None and may_trigger_auto_finish(move, state):
+                        return AUTO_WON
                     after, changed = self._read_change(state)
                 self.moves_made += 1
                 # Whatever you played, the solver's stock memory follows the suggestion only if it matched.
@@ -126,6 +151,9 @@ class GameLoop:
             self.executor.perform(action)
             after, changed = self._read_change(state)
             if after is None:
+                if may_trigger_auto_finish(move, state):
+                    self.moves_made += 1
+                    return AUTO_WON
                 state = self._read()
                 continue
             if not changed:
@@ -151,6 +179,9 @@ class GameLoop:
                 self.mismatches += 1
                 self.log(f"   MISMATCH: {move} did not land as predicted; board now:\n{after}")
                 self.on_mismatch(move, state, after)
+                if hasattr(self.solver, "failed"):
+                    self.solver.failed(move)
+                    self.log(f"   not trying {move.card} -> {move.dst} {move.dst_index + 1} again this game")
             state = after
 
 
@@ -203,6 +234,18 @@ def make_aim_check(plotter, axes, log: Callable[[str], None]) -> Callable[[Actio
     return aim_check
 
 
+def notify_win(log: Callable[[str], None]) -> None:
+    """A banner and a few beeps, so you hear it from across the room."""
+    log("\n" + "=" * 40 + "\n   GAME WON\n" + "=" * 40)
+    try:
+        import winsound
+        for _ in range(3):
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            time.sleep(0.4)
+    except (ImportError, RuntimeError):
+        print("\a", end="", flush=True)
+
+
 def main():
     settings = load_settings()
     pcfg, scr = settings["plotter"], settings["screen"]
@@ -250,6 +293,9 @@ def main():
         if pair:
             recorder.save_mismatch(before, *pair)
             log(f"   misread on every frame: {pair[0]} read as {pair[1]} (frame saved for labelling)")
+        else:
+            recorder.save_mismatch_frames(before, after, f"MISMATCH: {move}")
+            log("   frames before and after the move saved for labelling")
 
     plotter = None
     try:
@@ -274,6 +320,8 @@ def main():
             reason = "stopped by you (Ctrl+C)"
         except GrblError as e:
             reason = f"plotter error: {e}"
+        if reason.startswith("won") and settings["game"].get("notify_win", True):
+            notify_win(log)
         log(f"\nStopped: {reason}. {loop.moves_made} moves in {time.monotonic() - t0:.0f} s, "
             f"{loop.mismatches} landed somewhere unexpected, {recorder.saved} misread frames saved. "
             f"Log: {log_path}")

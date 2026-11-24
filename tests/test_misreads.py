@@ -61,3 +61,16 @@ def test_recorder_saves_only_after_the_old_board(tmp_path):
     assert rec.settled(TRUE) == [("7d", "6s")]   # only the SHIMMER after `old` counts
     saved = list(tmp_path.glob("*.json"))
     assert len(saved) == 1 and json.loads(saved[0].read_text())["confusions"] == [{"true": "7d", "read": "6s"}]
+
+
+def test_every_mismatch_saves_the_frames_before_and_after(tmp_path):
+    rec = MisreadRecorder(tmp_path)
+    img = np.zeros((4, 4, 3), np.uint8)
+    before, after = layout(["7d", "9c", "Qh", "4h"]), TRUE
+    for stable in (before, after):
+        rec.add(stable, img)
+        rec.settled(stable)
+    rec.save_mismatch_frames(before, after, "MISMATCH: tap Qd (waste -> col 5)")
+    notes = sorted(json.loads(p.read_text())["note"] for p in tmp_path.glob("*_mismatch.json"))
+    assert len(notes) == 2 and len(list(tmp_path.glob("*_mismatch.png"))) == 2
+    assert notes[0].endswith("(board after the move)") and notes[1].endswith("(board before the move)")

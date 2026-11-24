@@ -24,7 +24,7 @@ plotter:
   servo_settle_s: 0.15        # wait after a pen move so the servo arrives
   tap_dwell_s: 0.08           # time the tip rests on the glass during a tap
   drag_feed: 2500             # mm/min for pen-down drags (was 1500)
-  travel_feed: 6000           # mm/min for pen-up moves (was 3000; motor-capped on diagonals by Grbl._corexy_feed). G0 at $110=8000 skipped steps on diagonals (CoreXY runs one motor at up to 2x); raise slowly once runs are clean
+  travel_feed: 8000           # mm/min for pen-up moves (3000 -> 6000 -> 8000 on 2026-11-24 after a clean 70-move v3 game). 8000 = GRBL $110/$111, the ceiling unless those are raised. With axis_moves every move is straight, so both motors run at this feed. If taps start landing off by equal X and Y amounts, go back to 6000
   axis_moves: true            # true = X then Y, no diagonals (back on 2026-11-23: first live game missed its first target after a +X+Y diagonal). false = diagonal moves (fast, but the X+Y motor slipped on 2026-11-11); also applies to drags
   jog_step_mm: 5
 
@@ -72,6 +72,7 @@ stability:
   # Multi-frame agreement (solitaire/state/stable.py): trust a board only after this many
   # consecutive valid reads agree. Removes shimmer misreads and mid-animation frames.
   agree_frames: 3
+  max_invalid_between: 3       # invalid reads skipped (not counted) between agreeing ones; more in a row start over. 0 = any invalid read starts over (before 2026-11-24, when a flickering 6d strip kept a board from ever settling)
   read_timeout_s: 3.0         # give up on a stable read after this long (mirror dropped, menu on screen)
   change_timeout_s: 3.0       # after a tap, wait this long for the board to change before calling it a miss (2.0 once timed out on a tap that had registered, and the retry made a second move)
   frame_interval_s: 0.0       # pause between reads; 0 = as fast as detection runs
@@ -83,6 +84,7 @@ game:
   retry_nudges: [0.0, 0.3, -0.3]  # try k touches the card this fraction of its box height lower (+) / higher (-): drift of a few mm lands on the neighbour strip
   press_finish: true          # press Finish when the solver is stuck (false = just stop). Back on 2026-11-23 after the retrain (cards-3) and the card-accounting check; it was off because a misread waste card once made a game look stuck
   bounds_margin_mm: 2         # the plotter refuses targets closer than this to the screen edge
+  notify_win: true            # banner + beeps when a game ends won (incl. the app auto-finishing once no face-down card is left)
   log_dir: runs/games         # one log per game: every move, and every move that landed somewhere unexpected
   misread_dir: captures/misreads  # frames the detector misread (vs the stable board), PNG + JSON, for labelling
 
@@ -114,6 +116,15 @@ solver:
     peek: 3                   # drawing an unknown stock card into view
     move_cost: 0.1            # every move takes plotter time
     drag_cost: 0.3            # extra for a drag
+  v3:                         # solver v3 (solitaire/solver/sampling.py, run with `python -m solitaire.main_v3`); v2 ignores this
+    enabled: true             # false = SolverV3 behaves exactly like v2
+    samples: 12               # random deals of the hidden cards planned per move
+    beam_width: 40            # per-world search (weights come from solver.plan)
+    max_depth: 30
+    max_seconds: 2.0          # all worlds together; when it runs out, the worlds done so far vote
+    peek: true                # look under a card with Undo: play the flip, read it, Undo (README §3.4)
+    max_peeks: 12             # per game (each peek costs a move + an Undo on the clock)
+    peek_margin: 15           # peek only at a flip that scores within this of the best move (null = any flip)
 
 calibration:
   max_check_error_px: 30      # calibrate.py refuses to save if a check tap misses by more (a card strip is ~60 px tall)

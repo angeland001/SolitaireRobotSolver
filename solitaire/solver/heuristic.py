@@ -139,6 +139,33 @@ class Solver:
         # True at start: the solver may join a game mid-pass and can't know what was played,
         # so it allows one recycle before calling the game stuck (costs one pass at worst).
         self.played_since_recycle = True
+        # Moves that came back as a MISMATCH, never tried again this game: the same misread
+        # repeats every pass (2026-11-24: an undetected waste top made "Qd W->c5" fail 4
+        # passes running and cost the game). Keyed by card, source and destination.
+        self.blocked: set[tuple] = set()
+
+    @staticmethod
+    def _key(move: Move) -> tuple | None:
+        if move is None or move.is_stock:
+            return None
+        return (str(move.card.card), move.src, move.dst, move.dst_index)
+
+    def failed(self, move: Move) -> None:
+        """The loop saw this move land somewhere other than predicted (or not at all)."""
+        key = self._key(move)
+        if key is not None:
+            self.blocked.add(key)
+
+    def is_blocked(self, move: Move | None) -> bool:
+        return self._key(move) in self.blocked
+
+    def blocked_positions(self, state: GameState, root: tuple, allow_recycle: bool) -> set:
+        """The positions the blocked moves would lead to from `root`, for the planner's
+        no-revisit set, so no plan starts with a blocked move."""
+        if not self.blocked:
+            return set()
+        return {planner.apply(root, m, self.memory.draw_count) for m in planner.moves(root, allow_recycle)
+                if self.is_blocked(to_move(state, m))}
 
     def choose_move(self, state: GameState) -> Move | None:
         """Best move, a stock tap if nothing scores, or None when stuck (press Finish)."""
@@ -149,7 +176,8 @@ class Solver:
         if self.plan_cfg.get("enabled") and self.memory.ready:
             root = planner.from_state(state, self.memory.talon, self.memory.ptr)
             allow = self.max_recycles is None or self.recycles_used < self.max_recycles
-            plan = planner.search(root, self.plan_cfg, self.memory.draw_count, allow, self.history)
+            avoid = self.history | self.blocked_positions(state, root, allow)
+            plan = planner.search(root, self.plan_cfg, self.memory.draw_count, allow, avoid)
             self.history.add(root)
             stats = (f"{plan.nodes} positions{'' if plan.exhaustive else ', budget hit'}, "
                      f"stock {self.memory.known}/{len(self.memory.talon)} known")
@@ -168,7 +196,7 @@ class Solver:
         return self._heuristic_move(state)
 
     def _heuristic_move(self, state: GameState) -> Move | None:
-        ranked = rank_moves(state, self.weights)
+        ranked = [(s, m) for s, m in rank_moves(state, self.weights) if not self.is_blocked(m)]
         if ranked:
             return ranked[0][1]
         stock_taps = [m for m in legal_moves(state) if m.is_stock]
