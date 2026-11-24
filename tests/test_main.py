@@ -77,11 +77,12 @@ def test_plays_until_won():
     assert gl.moves_made == 2 and gl.mismatches == 0
 
 
-def test_stuck_presses_finish():
-    solver_settings = {**SETTINGS, "solver": {**SETTINGS["solver"], "max_recycles": 0}}
-    gl, ex = loop([STUCK], settings=solver_settings)
-    assert gl.run() == "stuck (Finish)"
-    assert ex.done == ["press Finish"]
+def test_stuck_presses_finish_only_when_enabled():
+    for press, reason, done in ((True, "stuck (Finish)", ["press Finish"]), (False, "stuck", [])):
+        settings = {**SETTINGS, "solver": {**SETTINGS["solver"], "max_recycles": 0},
+                    "game": {**SETTINGS["game"], "press_finish": press}}
+        gl, ex = loop([STUCK], settings=settings)
+        assert gl.run() == reason and ex.done == done
 
 
 def test_missed_taps_stop_the_loop():

@@ -9,6 +9,8 @@ Weights and the recycle limit live in config/settings.yaml under `solver:`.
 """
 from solitaire.config import load_settings
 from solitaire.state import Card, GameState
+from solitaire.solver import planner
+from solitaire.solver.memory import StockMemory
 from solitaire.solver.moves import FOUNDATION, TABLEAU, WASTE, Move, foundation_slot, legal_moves
 
 
@@ -94,10 +96,33 @@ def rank_moves(state: GameState, weights: dict) -> list[tuple[float, Move]]:
     return scored
 
 
+def to_move(state: GameState, m: tuple) -> Move | None:
+    """The real Move (with its PlacedCard and tap/drag) for a planner move."""
+    k = m[0]
+    for lm in legal_moves(state):
+        if k == "draw" and lm.is_stock and not lm.is_recycle or k == "recycle" and lm.is_recycle:
+            return lm
+        if lm.is_stock:
+            continue
+        if (k == "wf" and lm.src == WASTE and lm.dst == FOUNDATION
+                or k == "wt" and lm.src == WASTE and lm.dst == TABLEAU and lm.dst_index == m[1]
+                or k == "tf" and lm.src == TABLEAU and lm.dst == FOUNDATION and lm.src_index == m[1]
+                or k == "tt" and lm.src == TABLEAU and lm.dst == TABLEAU
+                and (lm.src_index, lm.src_depth, lm.dst_index) == m[1:]):
+            return lm
+    return None
+
+
 class Solver:
-    """Picks the next move and remembers what it needs across moves: how many times the
-    waste has been recycled, and whether anything was played since the last recycle
-    (if not, another pass deals the same cards and the game is stuck).
+    """Picks the next move and remembers what it needs across moves.
+
+    v2 (solver.plan.enabled): a StockMemory of the stock order, a lookahead search over
+    it (planner.py), and every position the game has been in (so plans never go back).
+    v1, the heuristic ranking below, is the fallback while the stock pointer is unknown
+    (joined mid-pass, or a read contradicted the memory) or when a search runs out of
+    budget without finding a gain. v1 tracks how many times the waste has been recycled
+    and whether anything was played since the last recycle (if not, another pass deals
+    the same cards and the game is stuck).
 
     Call `executed(move)` once a move has been verified on screen.
     """
@@ -106,6 +131,10 @@ class Solver:
         cfg = (settings or load_settings())["solver"]
         self.weights: dict = cfg["weights"]
         self.max_recycles: int | None = cfg.get("max_recycles")
+        self.plan_cfg: dict = cfg.get("plan") or {"enabled": False}
+        self.memory = StockMemory(cfg.get("draw_count", 3))
+        self.history: set = set()
+        self.last_plan = ""            # what the last choice was based on, for the log
         self.recycles_used = 0
         # True at start: the solver may join a game mid-pass and can't know what was played,
         # so it allows one recycle before calling the game stuck (costs one pass at worst).
@@ -115,6 +144,30 @@ class Solver:
         """Best move, a stock tap if nothing scores, or None when stuck (press Finish)."""
         if not state.is_valid:
             raise ValueError("refusing to plan on an invalid state: " + "; ".join(state.issues))
+        self.memory.observe(state)
+        self.last_plan = ""
+        if self.plan_cfg.get("enabled") and self.memory.ready:
+            root = planner.from_state(state, self.memory.talon, self.memory.ptr)
+            allow = self.max_recycles is None or self.recycles_used < self.max_recycles
+            plan = planner.search(root, self.plan_cfg, self.memory.draw_count, allow, self.history)
+            self.history.add(root)
+            stats = (f"{plan.nodes} positions{'' if plan.exhaustive else ', budget hit'}, "
+                     f"stock {self.memory.known}/{len(self.memory.talon)} known")
+            if plan.gain > 0:
+                move = to_move(state, plan.line[0])
+                if move is not None:
+                    self.last_plan = (f"plan +{plan.gain:.1f} ({stats}): "
+                                      f"{planner.describe(root, plan.line, limit=20, draw_count=self.memory.draw_count)}")
+                    return move
+            elif plan.exhaustive:
+                self.last_plan = f"stuck: no line gains anything ({stats})"
+                return None
+            self.last_plan = f"heuristic v1 ({stats})"
+        else:
+            self.last_plan = "heuristic v1 (stock position unknown)"
+        return self._heuristic_move(state)
+
+    def _heuristic_move(self, state: GameState) -> Move | None:
         ranked = rank_moves(state, self.weights)
         if ranked:
             return ranked[0][1]
@@ -130,6 +183,7 @@ class Solver:
         return tap
 
     def executed(self, move: Move) -> None:
+        self.memory.executed(move)
         if move.is_recycle:
             self.recycles_used += 1
             self.played_since_recycle = False

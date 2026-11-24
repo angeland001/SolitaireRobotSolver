@@ -56,22 +56,65 @@ def confusions(frame: GameState, stable: GameState, max_dist_px: float,
     return pairs
 
 
+def mismatch_confusion(move, before: GameState, after: GameState) -> tuple[str, str] | None:
+    """A move whose destination received a card that wasn't on the board before: the
+    source card was misread in every frame (multi-frame agreement can't catch that).
+    Returns (true, read), e.g. ('2d', '2h'). None if the mismatch has another cause."""
+    if move.card is None:
+        return None
+    if move.dst == "tableau":
+        old = {p.card for p in before.tableau[move.dst_index].faceup}
+        new = [p.card for p in after.tableau[move.dst_index].faceup if p.card not in old]
+    elif move.dst == "foundation":
+        old = {p.card for p in before.foundations if p}
+        new = [p.card for p in after.foundations if p and p.card not in old]
+    else:
+        return None
+    if len(new) != 1 or new[0] == move.card.card or new[0] in set(before.visible_cards()):
+        return None
+    return str(new[0]), str(move.card.card)
+
+
 class MisreadRecorder:
     """Keeps the recent frames (state + image); call settled(stable) whenever a stable
-    board is accepted. Saves PNG + JSON per misread frame into out_dir."""
+    board is accepted. Saves PNG + JSON per misread frame into out_dir. JSON `kind`:
+    misread (one frame disagreed with the stable board), mismatch (the stable board
+    itself was wrong, found when a move landed a different card), unreadable (no
+    stable board could be read at all)."""
 
     def __init__(self, out_dir: Path, max_dist_px: float = 40, keep: int = 60):
         self.out_dir = out_dir
         self.max_dist_px = max_dist_px
         self.frames: deque[tuple[GameState, np.ndarray]] = deque(maxlen=keep)
+        self.stable_images: deque[np.ndarray] = deque(maxlen=2)  # previous, latest stable board
+        self._last_repaired: list[tuple[str, str]] = []   # save a repaired card once, not every board
         self.saved = 0
 
     def add(self, state: GameState, image: np.ndarray) -> None:
         self.frames.append((state, image))
 
+    def save_unreadable(self) -> None:
+        if self.frames:
+            state, image = self.frames[-1]
+            self._save(state, image, [], "unreadable")
+
+    def save_mismatch(self, before: GameState, true: str, read: str) -> None:
+        """Saves the image of the board before the move (the one that was misread)."""
+        if len(self.stable_images) == 2:
+            self._save(before, self.stable_images[0], [(true, read)], "mismatch")
+
     def settled(self, stable: GameState) -> list[tuple[str, str]]:
         frames = list(self.frames)
         self.frames.clear()
+        for s, image in reversed(frames):
+            if s.signature == stable.signature:
+                self.stable_images.append(image)
+                break
+        # A card the builder had to repair was misread on the stable frames themselves.
+        repaired = [(t, r) for _, r, t in stable.repairs]
+        if repaired and self.stable_images and repaired != self._last_repaired:
+            self._save(stable, self.stable_images[-1], repaired, "repaired")
+        self._last_repaired = repaired
         # Drop everything up to the last valid frame that shows a different board.
         start = 0
         for i, (s, _) in enumerate(frames):
@@ -83,16 +126,18 @@ class MisreadRecorder:
                 continue
             pairs = confusions(s, stable, self.max_dist_px)
             if pairs:
-                self._save(s, image, pairs)
+                self._save(s, image, pairs, "misread")
                 found += pairs
         return found
 
-    def _save(self, state: GameState, image: np.ndarray, pairs: list[tuple[str, str]]) -> None:
+    def _save(self, state: GameState, image: np.ndarray, pairs: list[tuple[str, str]], kind: str) -> None:
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        stem = self.out_dir / f"{datetime.now():%Y%m%d_%H%M%S_%f}"
+        stem = self.out_dir / f"{datetime.now():%Y%m%d_%H%M%S_%f}_{kind}"
         cv2.imwrite(str(stem.with_suffix(".png")), image)
         stem.with_suffix(".json").write_text(json.dumps({
+            "kind": kind,
             "confusions": [{"true": t, "read": r} for t, r in pairs],
             "issues": state.issues,
+            "board": str(state),
         }, indent=1))
         self.saved += 1

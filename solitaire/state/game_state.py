@@ -39,6 +39,7 @@ class GameState:
     stock: Detection | None                  # face-down stock card; None = empty (recycle icon)
     tableau: list[Column]                    # 7 columns, left to right
     issues: list[str] = field(default_factory=list)  # validation problems; empty = trustworthy
+    repairs: list[tuple[str, str, str]] = field(default_factory=list)  # (where, read, corrected), e.g. ("column 5", "9d", "8d")
 
     @property
     def is_valid(self) -> bool:
@@ -87,5 +88,6 @@ class GameState:
         for i, col in enumerate(self.tableau, 1):
             down = f"[{len(col.facedown)}] " if col.facedown else ""
             lines.append(f"{i}: {down}{' '.join(map(str, col.faceup))}")
+        lines += [f"~ repaired {where}: read {r}, must be {t}" for where, r, t in self.repairs]
         lines += [f"! {issue}" for issue in self.issues]
         return "\n".join(lines)

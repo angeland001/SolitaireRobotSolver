@@ -48,6 +48,9 @@ layout:
 vision:
   # Raw Label Studio YOLO export (images/, labels/, classes.txt). Kept outside the repo.
   dataset_dir: C:/Users/rvj412/Downloads/Yolo/YoloSolitaire
+  # Label Studio review project built by tools/make_review.py; its parent folder is the
+  # LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT (kept outside the repo, like the dataset)
+  review_dir: C:/Users/rvj412/Downloads/Yolo/review
   # Generated split + data.yaml (git-ignored)
   prepared_dir: datasets/yolo_solitaire
   val_fraction: 0.15          # picks the best epoch during training
@@ -61,12 +64,16 @@ vision:
   weights: models/cards.pt    # best weights copied here after training
   conf_threshold: 0.5
 
+repair:
+  # StateBuilder fixes for misreads the rules pin down (README §4.2).
+  duplicate_conf_margin: 0.15 # a card read twice: rename the weaker copy to its same-colour sibling only if it is this much less confident (live case: 0.69 vs 0.95)
+
 stability:
   # Multi-frame agreement (solitaire/state/stable.py): trust a board only after this many
   # consecutive valid reads agree. Removes shimmer misreads and mid-animation frames.
   agree_frames: 3
   read_timeout_s: 3.0         # give up on a stable read after this long (mirror dropped, menu on screen)
-  change_timeout_s: 2.0       # after a tap, wait this long for the board to change before calling it a miss
+  change_timeout_s: 3.0       # after a tap, wait this long for the board to change before calling it a miss (2.0 once timed out on a tap that had registered, and the retry made a second move)
   frame_interval_s: 0.0       # pause between reads; 0 = as fast as detection runs
 
 game:
@@ -74,7 +81,7 @@ game:
   max_unreadable: 5           # consecutive failed stable reads (stability.read_timeout_s each) before stopping
   max_missed_moves: 2         # retries when a move leaves the board unchanged; then re-aim (live, asks you) or stop
   retry_nudges: [0.0, 0.3, -0.3]  # try k touches the card this fraction of its box height lower (+) / higher (-): drift of a few mm lands on the neighbour strip
-  press_finish: true          # press Finish when the solver is stuck (false = just stop)
+  press_finish: true          # press Finish when the solver is stuck (false = just stop). Back on 2026-11-23 after the retrain (cards-3) and the card-accounting check; it was off because a misread waste card once made a game look stuck
   bounds_margin_mm: 2         # the plotter refuses targets closer than this to the screen edge
   log_dir: runs/games         # one log per game: every move, and every move that landed somewhere unexpected
   misread_dir: captures/misreads  # frames the detector misread (vs the stable board), PNG + JSON, for labelling
@@ -90,6 +97,23 @@ solver:
     unblock_foundation: 25    # split a run so the card under it can go to a foundation
     waste_to_tableau: 20
     drag_penalty: 5           # a drag is slower than a tap (5-minute clock)
+  draw_count: 3               # cards per stock tap
+  plan:                       # v2 lookahead over the remembered stock order (solitaire/solver/planner.py)
+    enabled: true             # false = v1 heuristic only
+    beam_width: 300           # lines kept at each depth of the search
+    max_depth: 60             # moves looked ahead at most (a full stock pass is ~8 draws)
+    max_seconds: 1.0          # search time per move at most; when it runs out, it plays the best line found so far
+    discount: 0.01            # a gain k moves ahead counts (1 - k*discount): do useful things first
+    # Weights tuned with tools/simulate_games.py (2026-11-23, 300 random deals): these won 61
+    # (mean 16.6 foundation cards); v1 won 33 (12.2); the first guess (unsafe 3, reveal 8, peek 1) 41.
+    foundation: 10            # per card on a foundation
+    unsafe_foundation: 8      # per rank a foundation runs ahead of the other colour's lower suit + 2 (keep < foundation)
+    reveal: 14                # per face-down card turned over
+    talon_played: 0.5         # per card out of the stock/waste
+    empty_column: 0.5         # per empty column
+    peek: 3                   # drawing an unknown stock card into view
+    move_cost: 0.1            # every move takes plotter time
+    drag_cost: 0.3            # extra for a drag
 
 calibration:
   max_check_error_px: 30      # calibrate.py refuses to save if a check tap misses by more (a card strip is ~60 px tall)

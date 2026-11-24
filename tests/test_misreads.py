@@ -38,6 +38,16 @@ def test_cards_in_motion_are_not_misreads():
     assert confusions(frame, after, 40) == []
 
 
+def test_mismatch_confusion_finds_a_consistent_misread():
+    from solitaire.solver import legal_moves
+    from solitaire.vision.misreads import mismatch_confusion
+    before = board(["3c"], waste="2h")
+    move = next(m for m in legal_moves(before) if m.src == "waste" and m.dst == "tableau")
+    after = board(["3c 2d"], waste="6d")      # the waste card was really 2d
+    assert mismatch_confusion(move, before, after) == ("2d", "2h")
+    assert mismatch_confusion(move, before, board(["3c 2h"])) is None
+
+
 def test_a_different_board_is_not_a_misread():
     assert confusions(OTHER_BOARD, TRUE, 40) == []
 

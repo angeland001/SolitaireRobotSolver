@@ -47,7 +47,9 @@ class GameLoop:
     def __init__(self, reader: StableReader, solver: Solver, executor: Executor, settings: dict,
                  dry_run: bool = False, log: Callable[[str], None] = print,
                  aim_check: Callable[[Action], bool] | None = None,
-                 on_stable: Callable[[GameState], None] | None = None):
+                 on_stable: Callable[[GameState], None] | None = None,
+                 on_unreadable: Callable[[], None] | None = None,
+                 on_mismatch: Callable[[Move, GameState, GameState], None] | None = None):
         """aim_check: called once, with the raised pencil over the first target; return
         False to stop (the zero is off). on_stable: sees every board the reader accepts."""
         self.reader, self.solver, self.executor = reader, solver, executor
@@ -57,6 +59,8 @@ class GameLoop:
         self.aim_check = aim_check
         self.aimed = False            # the first-tap aim check has been done
         self.on_stable = on_stable or (lambda s: None)
+        self.on_unreadable = on_unreadable or (lambda: None)
+        self.on_mismatch = on_mismatch or (lambda m, b, a: None)
         self.moves_made = 0
         self.mismatches = 0
 
@@ -73,6 +77,7 @@ class GameLoop:
                 self.on_stable(state)
                 return state
             self.log(f"  no stable board yet: {'; '.join(self.reader.last_issues) or 'reads keep changing'}")
+        self.on_unreadable()
         return None
 
     def run(self) -> str:
@@ -87,6 +92,7 @@ class GameLoop:
 
             move = self.solver.choose_move(state)
             if move is None:
+                self.log(f"\n{state}\n   {getattr(self.solver, 'last_plan', '') or 'stuck'}")
                 if self.cfg["press_finish"] and not self.dry_run:
                     action = self.executor.plan_button("finish")
                     self.log(f"stuck -> {action}")
@@ -96,6 +102,8 @@ class GameLoop:
             nudges = self.cfg["retry_nudges"]
             action = self.executor.plan(move, state, nudge=0.0 if self.dry_run else nudges[min(missed, len(nudges) - 1)])
             self.log(f"\n{state}\n=> {action}")
+            if getattr(self.solver, "last_plan", ""):
+                self.log(f"   {self.solver.last_plan}")
 
             if self.dry_run:
                 self.log("   (dry run: play it by hand)")
@@ -142,6 +150,7 @@ class GameLoop:
                 # The app's tap rule picked another place than predicted (README §3.3/§6).
                 self.mismatches += 1
                 self.log(f"   MISMATCH: {move} did not land as predicted; board now:\n{after}")
+                self.on_mismatch(move, state, after)
             state = after
 
 
@@ -210,7 +219,7 @@ def main():
     from solitaire.plotter import Grbl, GrblError, PortNotFound, find_port
     from solitaire.state import StateBuilder
     from solitaire.vision import CardDetector
-    from solitaire.vision.misreads import MisreadRecorder
+    from solitaire.vision.misreads import MisreadRecorder, mismatch_confusion
 
     log_dir = repo_path(settings["game"]["log_dir"])
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -232,6 +241,16 @@ def main():
         for true, read in recorder.settled(state):
             log(f"   misread: {true} read as {read} (frame saved for labelling)")
 
+    def on_unreadable():
+        recorder.save_unreadable()
+        log("   last frame saved for labelling (unreadable board)")
+
+    def on_mismatch(move: Move, before: GameState, after: GameState):
+        pair = mismatch_confusion(move, before, after)
+        if pair:
+            recorder.save_mismatch(before, *pair)
+            log(f"   misread on every frame: {pair[0]} read as {pair[1]} (frame saved for labelling)")
+
     plotter = None
     try:
         if not args.dry_run:
@@ -245,6 +264,7 @@ def main():
 
         loop = GameLoop(reader, Solver(settings), Executor(cal, plotter, settings), settings,
                         dry_run=args.dry_run, log=log, on_stable=on_stable,
+                        on_unreadable=on_unreadable, on_mismatch=on_mismatch,
                         aim_check=None if args.no_aim_check or plotter is None
                         else make_aim_check(plotter, Axes.load(), log))
         t0 = time.monotonic()

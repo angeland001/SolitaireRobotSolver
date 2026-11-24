@@ -1,4 +1,5 @@
-"""Solver v1 on hand-built boards. Run: python -m pytest tests"""
+"""Solver v1 (heuristic, planner off) on hand-built boards. v2: test_planner.py.
+Run: python -m pytest tests"""
 import pytest
 from boards import board
 
@@ -6,7 +7,8 @@ from solitaire.config import load_settings
 from solitaire.solver import Solver, legal_moves
 from solitaire.state import GameState
 
-SETTINGS = load_settings()
+_s = load_settings()
+SETTINGS = {**_s, "solver": {**_s["solver"], "plan": {"enabled": False}}}
 
 
 def best(state: GameState, solver: Solver | None = None):

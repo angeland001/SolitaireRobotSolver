@@ -5,6 +5,7 @@ Usage: python tools/train_yolo.py [--epochs N] [--model yolo11s.pt] [--batch N]
 """
 import argparse
 import shutil
+from datetime import datetime
 import sys
 from pathlib import Path
 
@@ -51,6 +52,11 @@ def main():
     best = Path(results.save_dir) / "weights" / "best.pt"
     dest = repo_path(vision["weights"])
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        # keep the previous model so a worse retrain can be rolled back
+        prev = dest.with_name(f"{dest.stem}_prev_{datetime.now():%Y%m%d_%H%M%S}{dest.suffix}")
+        shutil.copy2(dest, prev)
+        print(f"Previous weights kept -> {prev}")
     shutil.copy2(best, dest)
     print(f"Best weights -> {dest}")
 
