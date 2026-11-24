@@ -115,6 +115,6 @@ def test_v3_never_replays_a_blocked_move():
     state = game.state()
     first = solver.choose_move(state)
     assert first is not None and not first.is_stock
-    solver.failed(first)
+    assert solver.failed(first, suspect=True)
     again = solver.choose_move(state)
     assert again is None or str(again) != str(first)

@@ -23,7 +23,7 @@ from typing import Callable
 from solitaire.config import load_settings, repo_path
 from solitaire.executor import Action, Executor
 from solitaire.solver import Move, Solver
-from solitaire.solver.moves import FOUNDATION, TABLEAU
+from solitaire.solver.moves import FOUNDATION, TABLEAU, WASTE
 from solitaire.state import GameState, StableReader
 
 
@@ -72,7 +72,8 @@ class GameLoop:
                  aim_check: Callable[[Action], bool] | None = None,
                  on_stable: Callable[[GameState], None] | None = None,
                  on_unreadable: Callable[[], None] | None = None,
-                 on_mismatch: Callable[[Move, GameState, GameState], None] | None = None):
+                 on_mismatch: Callable[[Move, GameState, GameState], None] | None = None,
+                 sleep: Callable[[float], None] = time.sleep):
         """aim_check: called once, with the raised pencil over the first target; return
         False to stop (the zero is off). on_stable: sees every board the reader accepts."""
         self.reader, self.solver, self.executor = reader, solver, executor
@@ -84,6 +85,7 @@ class GameLoop:
         self.on_stable = on_stable or (lambda s: None)
         self.on_unreadable = on_unreadable or (lambda: None)
         self.on_mismatch = on_mismatch or (lambda m, b, a: None)
+        self.sleep = sleep
         self.moves_made = 0
         self.mismatches = 0
 
@@ -92,6 +94,18 @@ class GameLoop:
         if after is not None:
             self.on_stable(after)
         return after, changed
+
+    def _log_timing(self, plotter_s: float) -> None:
+        """Where a move's time goes (README §3.5): the plotter, then the wait for the screen
+        to change (app animation + mirror delay), then for `agree_frames` reads to agree."""
+        r = self.reader
+        elapsed = getattr(r, "last_elapsed_s", None)
+        if elapsed is None:
+            return
+        first = r.last_first_change_s
+        changed = f"screen changed {first:.2f} s" if first is not None else "no change seen"
+        self.log(f"   timing: plotter {plotter_s:.2f} s, {changed}, read done {elapsed:.2f} s "
+                 f"({r.last_frames} frames)")
 
     def _read(self) -> GameState | None:
         for _ in range(self.cfg["max_unreadable"]):
@@ -114,6 +128,13 @@ class GameLoop:
                 return "won"
 
             move = self.solver.choose_move(state)
+            if move is None and hasattr(self.solver, "release_blocked"):
+                freed = self.solver.release_blocked()
+                if freed:
+                    # Finishing costs the game; another try at a move that failed once costs a tap.
+                    names = ", ".join(f"{c} {src}->{dst} {i + 1}" for c, src, dst, i in freed)
+                    self.log(f"   stuck with blocked moves; trying them once more: {names}")
+                    move = self.solver.choose_move(state)
             if move is None:
                 self.log(f"\n{state}\n   {getattr(self.solver, 'last_plan', '') or 'stuck'}")
                 if self.cfg["press_finish"] and not self.dry_run:
@@ -148,14 +169,26 @@ class GameLoop:
                 if not self.aim_check(action):
                     return "stopped at the aim check"
 
+            t0 = time.monotonic()
             self.executor.perform(action)
+            t1 = time.monotonic()
             after, changed = self._read_change(state)
+            self._log_timing(t1 - t0)
             if after is None:
                 if may_trigger_auto_finish(move, state):
                     self.moves_made += 1
                     return AUTO_WON
                 state = self._read()
                 continue
+            if not changed:
+                # One more look before touching the screen again: a tap the app took late
+                # would otherwise be followed by a retry that plays a second, unplanned move
+                # (2026-11-24: 8c and Js both moved, then the retry moved Qh / 10h too).
+                late = self.reader.read()
+                if late is not None and late.signature != state.signature:
+                    self.on_stable(late)
+                    self.log("   the tap registered late; not tapping again")
+                    after, changed = late, True
             if not changed:
                 missed += 1
                 self.log(f"   board unchanged ({missed}/{self.cfg['max_missed_moves']})")
@@ -172,6 +205,10 @@ class GameLoop:
                 continue
             missed = 0
             self.moves_made += 1
+            if move.src == WASTE or move.is_recycle:
+                # The waste fan keeps sliding after the top card settles, and the app ignores
+                # taps until it stops: 16 of 18 missed taps (2026-11-24) came right after one.
+                self.sleep(self.cfg.get("settle_after_waste_s", 0.0))
             if landed(move, state, after):
                 self.solver.executed(move)
             else:
@@ -180,8 +217,11 @@ class GameLoop:
                 self.log(f"   MISMATCH: {move} did not land as predicted; board now:\n{after}")
                 self.on_mismatch(move, state, after)
                 if hasattr(self.solver, "failed"):
-                    self.solver.failed(move)
-                    self.log(f"   not trying {move.card} -> {move.dst} {move.dst_index + 1} again this game")
+                    where = f"{move.card} -> {move.dst} {move.dst_index + 1}"
+                    if self.solver.failed(move, suspect=bool(state.repairs)):
+                        self.log(f"   not trying {where} again this game")
+                    else:
+                        self.log(f"   {where} may be tried again (the board read clean; maybe the tap misfired)")
             state = after
 
 

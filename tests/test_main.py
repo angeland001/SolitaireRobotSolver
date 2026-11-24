@@ -52,7 +52,7 @@ class RecordingExecutor(Executor):
 def loop(boards, dry_run=False, settings=SETTINGS, aim_check=None):
     ex = RecordingExecutor()
     gl = GameLoop(ScriptedReader(boards), Solver(settings), ex, settings, dry_run=dry_run,
-                  log=lambda m: None, aim_check=aim_check)
+                  log=lambda m: None, aim_check=aim_check, sleep=lambda s: None)
     return gl, ex
 
 
@@ -104,10 +104,17 @@ def test_retries_are_nudged_along_the_card():
 
 def test_repeated_misses_re_aim_and_continue():
     asked = []
-    gl, ex = loop([START, START, START, START, START, AFTER_ACE, WON],
+    gl, ex = loop([START] * 8 + [AFTER_ACE, WON],     # each miss also re-reads once
                   aim_check=lambda a: asked.append(a.label) or True)
     assert gl.run() == "won"
     assert len(asked) == 2      # first-tap check, then the re-aim after 3 misses
+
+
+def test_a_tap_that_registers_late_is_not_retried():
+    # The change came after change_timeout_s: the extra read sees it, so no second tap.
+    gl, ex = loop([START, START, AFTER_ACE, WON])
+    assert gl.run() == "won"
+    assert [d.startswith("tap Ah") for d in ex.done].count(True) == 1
 
 
 def test_mismatch_is_counted_not_fatal():
@@ -166,10 +173,43 @@ def test_dry_run_last_flip_is_a_win():
     assert gl.run().startswith("won")
 
 
-def test_a_move_that_mismatched_is_not_tried_again():
+def test_a_move_that_mismatched_twice_is_not_tried_again():
     # 2026-11-24: an undetected waste top made "Qd W->c5" fail every pass.
     elsewhere = board(["## 9s", "## Ah"])          # the tap changed the board, Ah didn't go up
-    gl, ex = loop([START, elsewhere, START, WON])   # ... and the same board comes back
-    assert gl.run() == "won" and gl.mismatches == 1
-    assert gl.solver.blocked == {("Ah", "tableau", "foundation", 0)}
-    assert ex.done[0].startswith("tap Ah") and not ex.done[-1].startswith("tap Ah")
+    gl, ex = loop([START, elsewhere, START, elsewhere, START, WON])   # ... and the same board comes back
+    assert gl.run() == "won" and gl.mismatches >= 2
+    assert ("Ah", "tableau", "foundation", 0) in gl.solver.blocked
+    assert [d.startswith("tap Ah") for d in ex.done].count(True) == 2
+    assert not ex.done[-1].startswith("tap Ah")
+
+
+def test_a_clean_read_mismatch_is_tried_again():
+    # 2026-11-24: a tap on waste 10h (read right) did a recycle; blocking 10h->c3 at once
+    # left nothing to play and the game ended stuck.
+    elsewhere = board(["## 9s", "## 8h"])          # the tap did something else (no Ah to play here)
+    gl, ex = loop([START, elsewhere, START, AFTER_ACE, WON])
+    gl.run()
+    assert [d.startswith("tap Ah") for d in ex.done].count(True) == 2
+    assert ("Ah", "tableau", "foundation", 0) not in gl.solver.blocked
+
+
+def test_a_mismatch_on_a_repaired_board_blocks_at_once():
+    start = board(["## Ah", "## 9s"])
+    start.repairs.append(("column 1", "Ad", "Ah"))
+    elsewhere = board(["## 9s", "## Ah"])
+    gl, ex = loop([start, elsewhere, START, WON])
+    gl.run()
+    assert ("Ah", "tableau", "foundation", 0) in gl.solver.blocked
+    assert [d.startswith("tap Ah") for d in ex.done].count(True) == 1
+
+
+def test_stuck_releases_blocked_moves_once():
+    solver = Solver(SETTINGS)
+    move = solver.choose_move(START)
+    assert move is not None and str(move.card) == "Ah"
+    solver.failed(move, suspect=True)
+    assert solver.is_blocked(move)
+    assert solver.release_blocked() == [("Ah", "tableau", "foundation", 0)]
+    assert not solver.is_blocked(move)
+    assert solver.failed(move) is True          # failed again after its extra try: blocked for good
+    assert solver.release_blocked() == []

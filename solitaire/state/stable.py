@@ -69,6 +69,11 @@ class StableReader:
         self.frame_interval_s: float = cfg["frame_interval_s"]
         self.clock, self.sleep = clock, sleep
         self.last_issues: list[str] = []   # issues of the most recent invalid read, for messages
+        # Timing of the most recent read, in s from its start, for the game log: when a frame
+        # first differed from `before` (None: never), when it returned, and frames read.
+        self.last_first_change_s: float | None = None
+        self.last_elapsed_s: float = 0.0
+        self.last_frames: int = 0
 
     def read(self, timeout_s: float | None = None) -> GameState | None:
         """A stable, valid board, or None if none settled within the timeout (mirror
@@ -92,12 +97,18 @@ class StableReader:
         deadline = self.clock() + timeout_s
         last_stable: GameState | None = None
         differ_run, saw_change = 0, False
+        start = self.clock()
+        self.last_first_change_s, self.last_frames = None, 0
         while True:
             raw = self.read_state()
+            self.last_frames += 1
+            self.last_elapsed_s = self.clock() - start
             if not raw.is_valid:
                 self.last_issues = list(raw.issues)
             if differ_from is not None:
                 differ_run = differ_run + 1 if raw.signature != differ_from else 0
+                if differ_run == 1 and self.last_first_change_s is None:
+                    self.last_first_change_s = self.last_elapsed_s
                 saw_change = saw_change or differ_run >= self.agree_frames
             state = tracker.push(raw)
             if state is not None:

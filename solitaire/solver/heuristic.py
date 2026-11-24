@@ -139,10 +139,17 @@ class Solver:
         # True at start: the solver may join a game mid-pass and can't know what was played,
         # so it allows one recycle before calling the game stuck (costs one pass at worst).
         self.played_since_recycle = True
-        # Moves that came back as a MISMATCH, never tried again this game: the same misread
+        # Moves that came back as a MISMATCH, keyed by card, source and destination. A misread
         # repeats every pass (2026-11-24: an undetected waste top made "Qd W->c5" fail 4
-        # passes running and cost the game). Keyed by card, source and destination.
+        # passes running and cost the game), so a move is blocked after `mismatch_tries`
+        # failures, or after one if the board it was planned on needed a repair. But a tap
+        # can also just misfire on a board read right (2026-11-24: a tap on waste 10h did a
+        # recycle; blocking 10h->c3 at once left nothing to play), hence the second try and
+        # `release_blocked` when stuck.
+        self.mismatch_tries: int = max(1, int(cfg.get("mismatch_tries", 2)))
+        self.fail_counts: dict[tuple, int] = {}
         self.blocked: set[tuple] = set()
+        self.released: set[tuple] = set()     # blocked once, given one more try when stuck
 
     @staticmethod
     def _key(move: Move) -> tuple | None:
@@ -150,11 +157,32 @@ class Solver:
             return None
         return (str(move.card.card), move.src, move.dst, move.dst_index)
 
-    def failed(self, move: Move) -> None:
-        """The loop saw this move land somewhere other than predicted (or not at all)."""
+    def failed(self, move: Move, suspect: bool = False) -> bool:
+        """The loop saw this move land somewhere other than predicted. `suspect`: the board
+        it was planned on needed a repair, so a misread is likely. Returns True when the
+        move is now blocked for the rest of the game."""
         key = self._key(move)
-        if key is not None:
+        if key is None:
+            return False
+        self.fail_counts[key] = self.fail_counts.get(key, 0) + 1
+        if suspect or key in self.released or self.fail_counts[key] >= self.mismatch_tries:
             self.blocked.add(key)
+            return True
+        # Allowed again: forget the positions seen so far, or the planner refuses to go
+        # back to the board it was tried on (it counts as already visited).
+        self.history.clear()
+        return False
+
+    def release_blocked(self) -> list[tuple]:
+        """When stuck: unblock every blocked move not released before, for one more try
+        each (a further failure blocks it for good). Returns the keys released; empty means
+        stuck for real."""
+        freed = sorted(self.blocked - self.released)
+        if freed:
+            self.blocked -= set(freed)
+            self.released |= set(freed)
+            self.history.clear()
+        return freed
 
     def is_blocked(self, move: Move | None) -> bool:
         return self._key(move) in self.blocked

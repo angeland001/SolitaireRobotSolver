@@ -21,7 +21,7 @@ plotter:
   baud: 115200
   pen_up: "M3 S0"             # from the 2025 prototype; tune with plotter_console.py
   pen_down: "M3 S90"
-  servo_settle_s: 0.15        # wait after a pen move so the servo arrives
+  servo_settle_s: 0.10        # wait after a pen move so the servo arrives (0.15 until 2026-11-24; back to 0.15 if taps start missing)
   tap_dwell_s: 0.08           # time the tip rests on the glass during a tap
   drag_feed: 2500             # mm/min for pen-down drags (was 1500)
   travel_feed: 8000           # mm/min for pen-up moves (3000 -> 6000 -> 8000 on 2026-11-24 after a clean 70-move v3 game). 8000 = GRBL $110/$111, the ceiling unless those are raised. With axis_moves every move is straight, so both motors run at this feed. If taps start landing off by equal X and Y amounts, go back to 6000
@@ -81,6 +81,7 @@ game:
   # The control loop (solitaire/main.py).
   max_unreadable: 5           # consecutive failed stable reads (stability.read_timeout_s each) before stopping
   max_missed_moves: 2         # retries when a move leaves the board unchanged; then re-aim (live, asks you) or stop
+  settle_after_waste_s: 0.5   # pause after a waste move or recycle before the next tap: the waste fan is still sliding and the app ignores taps (16 of 18 missed taps on 2026-11-24 came right after one)
   retry_nudges: [0.0, 0.3, -0.3]  # try k touches the card this fraction of its box height lower (+) / higher (-): drift of a few mm lands on the neighbour strip
   press_finish: true          # press Finish when the solver is stuck (false = just stop). Back on 2026-11-23 after the retrain (cards-3) and the card-accounting check; it was off because a misread waste card once made a game look stuck
   bounds_margin_mm: 2         # the plotter refuses targets closer than this to the screen edge
@@ -90,6 +91,7 @@ game:
 
 solver:
   max_recycles: null          # times the waste can go back into the stock; null = unknown (README §6 TODO), only "stuck" stops it
+  mismatch_tries: 2           # MISMATCHes before a move is blocked for the game (1 if its board needed a repair); blocked moves get one more try before "stuck"
   weights:                    # heuristic scores (solitaire/solver/heuristic.py); higher = played first
     foundation: 60            # any card to a foundation (the app's points)
     safe_foundation: 40       # extra when no tableau card could still need it (Aces, 2s, or opposite colours caught up)
